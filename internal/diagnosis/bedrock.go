@@ -1,31 +1,42 @@
 package diagnosis
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 
 	preflightcfg "github.com/rmukubvu/preflight/internal/config"
 )
 
-// BedrockProvider diagnoses failures using AWS Bedrock InvokeModel.
-// It uses the existing AWS credential chain — no new API key required.
+// BedrockProvider diagnoses failures using Bedrock's OpenAI-compatible
+// chat completions endpoint. It uses the existing AWS credential chain —
+// no new API key or SDK model-format switching required.
+//
+// Endpoint: https://bedrock.{region}.amazonaws.com/v1/chat/completions
+// Docs: https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions.html
 type BedrockProvider struct {
-	cfg preflightcfg.BedrockConfig
+	cfg    preflightcfg.BedrockConfig
+	client *http.Client
 }
 
 func NewBedrockProvider(cfg preflightcfg.BedrockConfig) *BedrockProvider {
-	return &BedrockProvider{cfg: cfg}
+	return &BedrockProvider{
+		cfg:    cfg,
+		client: &http.Client{Timeout: 30 * time.Second},
+	}
 }
 
 func (p *BedrockProvider) Name() string { return "bedrock" }
 
 // Available returns true if AWS credentials are present in the environment.
-// It attempts to load the default config; if that fails, credentials are absent.
 func (p *BedrockProvider) Available(ctx context.Context) bool {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -50,88 +61,77 @@ func (p *BedrockProvider) Diagnose(ctx context.Context, req DiagnoseRequest) (Di
 		return DiagnoseResponse{}, fmt.Errorf("loading AWS config: %w", err)
 	}
 
-	client := bedrockruntime.NewFromConfig(awsCfg)
-	prompt := buildPrompt(req)
-
-	// Build the request body. Format varies by model family.
-	var body []byte
-	if isNovaModel(modelID) {
-		body, err = json.Marshal(map[string]any{
-			"messages": []map[string]any{
-				{"role": "user", "content": []map[string]string{{"text": prompt}}},
-			},
-			"inferenceConfig": map[string]int{"maxTokens": 1024},
-		})
-	} else {
-		// Claude on Bedrock format
-		body, err = json.Marshal(map[string]any{
-			"anthropic_version": "bedrock-2023-05-31",
-			"max_tokens":        1024,
-			"messages": []map[string]string{
-				{"role": "user", "content": prompt},
-			},
-		})
-	}
+	// Build a standard OpenAI-format request body — no model-specific branches.
+	body, err := json.Marshal(map[string]any{
+		"model": modelID,
+		"messages": []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": buildPrompt(req)},
+		},
+		"max_tokens": 1024,
+	})
 	if err != nil {
 		return DiagnoseResponse{}, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	out, err := client.InvokeModel(ctx, &bedrockruntime.InvokeModelInput{
-		ModelId:     aws.String(modelID),
-		Body:        body,
-		ContentType: aws.String("application/json"),
-		Accept:      aws.String("application/json"),
-	})
-	if err != nil {
-		return DiagnoseResponse{}, fmt.Errorf("invoking Bedrock model: %w", err)
-	}
+	endpoint := fmt.Sprintf("https://bedrock.%s.amazonaws.com/v1/chat/completions", region)
 
-	text, err := extractBedrockText(out.Body, modelID)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return DiagnoseResponse{}, err
 	}
+	httpReq.Header.Set("Content-Type", "application/json")
 
-	return parseStructuredResponse(text, p.Name()), nil
+	// Sign the request with AWS SigV4. Bedrock's OpenAI-compatible endpoint
+	// uses the "bedrock" service name.
+	creds, err := awsCfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		return DiagnoseResponse{}, fmt.Errorf("retrieving AWS credentials: %w", err)
+	}
+
+	payloadHash := sha256Hex(body)
+	signer := v4.NewSigner()
+	if err := signer.SignHTTP(ctx, creds, httpReq, payloadHash, "bedrock", region, time.Now()); err != nil {
+		return DiagnoseResponse{}, fmt.Errorf("signing request: %w", err)
+	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return DiagnoseResponse{}, fmt.Errorf("calling Bedrock: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errBody map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&errBody)
+		return DiagnoseResponse{}, fmt.Errorf("Bedrock returned %d: %v", resp.StatusCode, errBody)
+	}
+
+	// Parse the standard OpenAI chat completions response.
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return DiagnoseResponse{}, fmt.Errorf("decoding response: %w", err)
+	}
+	if len(result.Choices) == 0 {
+		return DiagnoseResponse{}, fmt.Errorf("no choices in Bedrock response")
+	}
+
+	return parseStructuredResponse(result.Choices[0].Message.Content, p.Name()), nil
 }
 
-func isNovaModel(modelID string) bool {
-	return len(modelID) > 6 && modelID[:6] == "amazon"
+func sha256Hex(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
 }
 
-func extractBedrockText(body []byte, modelID string) (string, error) {
-	if isNovaModel(modelID) {
-		var resp struct {
-			Output struct {
-				Message struct {
-					Content []struct {
-						Text string `json:"text"`
-					} `json:"content"`
-				} `json:"message"`
-			} `json:"output"`
-		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return "", fmt.Errorf("decoding Nova response: %w", err)
-		}
-		if len(resp.Output.Message.Content) > 0 {
-			return resp.Output.Message.Content[0].Text, nil
-		}
-		return "", fmt.Errorf("empty Nova response")
-	}
-
-	// Claude on Bedrock format
-	var resp struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", fmt.Errorf("decoding Claude-on-Bedrock response: %w", err)
-	}
-	for _, c := range resp.Content {
-		if c.Type == "text" {
-			return c.Text, nil
-		}
-	}
-	return "", fmt.Errorf("no text in Bedrock response")
+// BedrockEndpoint returns the chat completions URL for the given region.
+// Exported for use in tests and diagnostics.
+func BedrockEndpoint(region string) string {
+	return fmt.Sprintf("https://bedrock.%s.amazonaws.com/v1/chat/completions", region)
 }
