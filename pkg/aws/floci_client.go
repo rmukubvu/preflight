@@ -1,0 +1,386 @@
+package aws
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
+	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/smithy-go"
+)
+
+// FlociClient implements Client, pointing all service calls at the Floci
+// local AWS emulator. Credentials are fixed test values because Floci does
+// not enforce authentication.
+type FlociClient struct {
+	cfn    *cloudformation.Client
+	lambda *awslambda.Client
+	sqsSvc *sqs.Client
+	s3Svc  *s3.Client
+	iamSvc *iam.Client
+	apigw  *apigatewayv2.Client
+}
+
+// NewFlociClient constructs a FlociClient targeting baseURL (e.g. "http://localhost:4566").
+func NewFlociClient(baseURL string) (*FlociClient, error) {
+	if _, err := url.ParseRequestURI(baseURL); err != nil {
+		return nil, fmt.Errorf("invalid floci base URL %q: %w", baseURL, err)
+	}
+
+	// Floci does not enforce authentication; use fixed test credentials.
+	creds := credentials.NewStaticCredentialsProvider("test", "test", "")
+
+	endpoint := aws.EndpointResolverWithOptionsFunc(
+		func(service, region string, _ ...any) (aws.Endpoint, error) {
+			return aws.Endpoint{
+				URL:               baseURL,
+				HostnameImmutable: true,
+				SigningRegion:     region,
+			}, nil
+		},
+	)
+
+	base := aws.Config{
+		Region:                      "us-east-1",
+		Credentials:                 creds,
+		EndpointResolverWithOptions: endpoint, //nolint:staticcheck // required for Floci compatibility
+	}
+
+	return &FlociClient{
+		cfn:    cloudformation.NewFromConfig(base),
+		lambda: awslambda.NewFromConfig(base),
+		sqsSvc: sqs.NewFromConfig(base),
+		s3Svc:  s3.NewFromConfig(base),
+		iamSvc: iam.NewFromConfig(base),
+		apigw:  apigatewayv2.NewFromConfig(base),
+	}, nil
+}
+
+var _ Client = (*FlociClient)(nil) // compile-time interface check
+
+// ─── CloudFormation ──────────────────────────────────────────────────────────
+
+func (c *FlociClient) CloudFormationStackStatus(ctx context.Context, stackName string) (string, error) {
+	out, err := c.cfn.DescribeStacks(ctx, &cloudformation.DescribeStacksInput{
+		StackName: aws.String(stackName),
+	})
+	if err != nil {
+		var ae smithy.APIError
+		if errors.As(err, &ae) && ae.ErrorCode() == "ValidationError" {
+			return "DOES_NOT_EXIST", nil
+		}
+		return "", fmt.Errorf("describing stack %q: %w", stackName, err)
+	}
+	if len(out.Stacks) == 0 {
+		return "DOES_NOT_EXIST", nil
+	}
+	return string(out.Stacks[0].StackStatus), nil
+}
+
+func (c *FlociClient) CloudFormationStackResources(ctx context.Context, stackName string) ([]StackResource, error) {
+	out, err := c.cfn.ListStackResources(ctx, &cloudformation.ListStackResourcesInput{
+		StackName: aws.String(stackName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing resources for stack %q: %w", stackName, err)
+	}
+
+	resources := make([]StackResource, 0, len(out.StackResourceSummaries))
+	for _, r := range out.StackResourceSummaries {
+		resources = append(resources, StackResource{
+			LogicalID:  aws.ToString(r.LogicalResourceId),
+			PhysicalID: aws.ToString(r.PhysicalResourceId),
+			Type:       aws.ToString(r.ResourceType),
+			Status:     string(r.ResourceStatus),
+		})
+	}
+	return resources, nil
+}
+
+// ─── Lambda ───────────────────────────────────────────────────────────────────
+
+func (c *FlociClient) LambdaFunctionExists(ctx context.Context, functionName string) (bool, error) {
+	_, err := c.lambda.GetFunction(ctx, &awslambda.GetFunctionInput{
+		FunctionName: aws.String(functionName),
+	})
+	if err != nil {
+		var ae smithy.APIError
+		if errors.As(err, &ae) && ae.ErrorCode() == "ResourceNotFoundException" {
+			return false, nil
+		}
+		return false, fmt.Errorf("getting function %q: %w", functionName, err)
+	}
+	return true, nil
+}
+
+func (c *FlociClient) LambdaFunctionConfig(ctx context.Context, functionName string) (LambdaConfig, error) {
+	out, err := c.lambda.GetFunctionConfiguration(ctx, &awslambda.GetFunctionConfigurationInput{
+		FunctionName: aws.String(functionName),
+	})
+	if err != nil {
+		return LambdaConfig{}, fmt.Errorf("getting config for %q: %w", functionName, err)
+	}
+
+	env := make(map[string]string)
+	if out.Environment != nil {
+		for k, v := range out.Environment.Variables {
+			env[k] = v
+		}
+	}
+
+	return LambdaConfig{
+		FunctionName: aws.ToString(out.FunctionName),
+		FunctionARN:  aws.ToString(out.FunctionArn),
+		RoleARN:      aws.ToString(out.Role),
+		Handler:      aws.ToString(out.Handler),
+		Runtime:      string(out.Runtime),
+		Environment:  env,
+	}, nil
+}
+
+func (c *FlociClient) LambdaEventSourceMappings(ctx context.Context, functionName string) ([]EventSourceMapping, error) {
+	out, err := c.lambda.ListEventSourceMappings(ctx, &awslambda.ListEventSourceMappingsInput{
+		FunctionName: aws.String(functionName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing ESMs for %q: %w", functionName, err)
+	}
+
+	mappings := make([]EventSourceMapping, 0, len(out.EventSourceMappings))
+	for _, m := range out.EventSourceMappings {
+		mappings = append(mappings, EventSourceMapping{
+			UUID:           aws.ToString(m.UUID),
+			FunctionARN:    aws.ToString(m.FunctionArn),
+			EventSourceARN: aws.ToString(m.EventSourceArn),
+			State:          aws.ToString(m.State),
+		})
+	}
+	return mappings, nil
+}
+
+func (c *FlociClient) LambdaInvoke(ctx context.Context, functionName string, payload []byte) ([]byte, error) {
+	out, err := c.lambda.Invoke(ctx, &awslambda.InvokeInput{
+		FunctionName: aws.String(functionName),
+		Payload:      payload,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invoking %q: %w", functionName, err)
+	}
+	if out.FunctionError != nil {
+		return out.Payload, fmt.Errorf("function error: %s", aws.ToString(out.FunctionError))
+	}
+	return out.Payload, nil
+}
+
+// ─── SQS ──────────────────────────────────────────────────────────────────────
+
+func (c *FlociClient) SQSQueueExists(ctx context.Context, queueName string) (bool, error) {
+	_, err := c.sqsSvc.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
+		QueueName: aws.String(queueName),
+	})
+	if err != nil {
+		var ae smithy.APIError
+		if errors.As(err, &ae) && ae.ErrorCode() == "AWS.SimpleQueueService.NonExistentQueue" {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking queue %q: %w", queueName, err)
+	}
+	return true, nil
+}
+
+func (c *FlociClient) SQSQueueURL(ctx context.Context, queueName string) (string, error) {
+	out, err := c.sqsSvc.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
+		QueueName: aws.String(queueName),
+	})
+	if err != nil {
+		return "", fmt.Errorf("getting URL for queue %q: %w", queueName, err)
+	}
+	return aws.ToString(out.QueueUrl), nil
+}
+
+// ─── S3 ───────────────────────────────────────────────────────────────────────
+
+func (c *FlociClient) S3BucketExists(ctx context.Context, bucket string) (bool, error) {
+	_, err := c.s3Svc.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		var ae smithy.APIError
+		if errors.As(err, &ae) && (ae.ErrorCode() == "NotFound" || ae.ErrorCode() == "NoSuchBucket") {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking bucket %q: %w", bucket, err)
+	}
+	return true, nil
+}
+
+func (c *FlociClient) S3BucketNotificationTargets(ctx context.Context, bucket string) ([]S3Notification, error) {
+	out, err := c.s3Svc.GetBucketNotificationConfiguration(ctx, &s3.GetBucketNotificationConfigurationInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting notifications for bucket %q: %w", bucket, err)
+	}
+
+	var notifications []S3Notification
+
+	for _, lc := range out.LambdaFunctionConfigurations {
+		events := make([]string, len(lc.Events))
+		for i, e := range lc.Events {
+			events[i] = string(e)
+		}
+		notifications = append(notifications, S3Notification{
+			Events:    events,
+			LambdaARN: aws.ToString(lc.LambdaFunctionArn),
+		})
+	}
+
+	for _, qc := range out.QueueConfigurations {
+		events := make([]string, len(qc.Events))
+		for i, e := range qc.Events {
+			events[i] = string(e)
+		}
+		notifications = append(notifications, S3Notification{
+			Events:   events,
+			QueueARN: aws.ToString(qc.QueueArn),
+		})
+	}
+
+	return notifications, nil
+}
+
+// ─── IAM ──────────────────────────────────────────────────────────────────────
+
+func (c *FlociClient) IAMRoleExists(ctx context.Context, roleName string) (bool, error) {
+	_, err := c.iamSvc.GetRole(ctx, &iam.GetRoleInput{
+		RoleName: aws.String(roleName),
+	})
+	if err != nil {
+		var ae smithy.APIError
+		if errors.As(err, &ae) && ae.ErrorCode() == "NoSuchEntity" {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking role %q: %w", roleName, err)
+	}
+	return true, nil
+}
+
+// IAMRolePolicies collects all policy statements for the role:
+// inline policies (GetRolePolicy) + attached managed policies (GetPolicy + GetPolicyVersion).
+func (c *FlociClient) IAMRolePolicies(ctx context.Context, roleName string) ([]PolicyStatement, error) {
+	var stmts []PolicyStatement
+
+	// Inline policies
+	inline, err := c.iamSvc.ListRolePolicies(ctx, &iam.ListRolePoliciesInput{
+		RoleName: aws.String(roleName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing inline policies for %q: %w", roleName, err)
+	}
+	for _, policyName := range inline.PolicyNames {
+		out, err := c.iamSvc.GetRolePolicy(ctx, &iam.GetRolePolicyInput{
+			RoleName:   aws.String(roleName),
+			PolicyName: aws.String(policyName),
+		})
+		if err != nil {
+			continue
+		}
+		decoded, _ := url.QueryUnescape(aws.ToString(out.PolicyDocument))
+		stmts = append(stmts, parseStatements(decoded)...)
+	}
+
+	// Attached managed policies
+	attached, err := c.iamSvc.ListAttachedRolePolicies(ctx, &iam.ListAttachedRolePoliciesInput{
+		RoleName: aws.String(roleName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing attached policies for %q: %w", roleName, err)
+	}
+	for _, p := range attached.AttachedPolicies {
+		pv, err := c.iamSvc.GetPolicy(ctx, &iam.GetPolicyInput{
+			PolicyArn: p.PolicyArn,
+		})
+		if err != nil {
+			continue
+		}
+		pvOut, err := c.iamSvc.GetPolicyVersion(ctx, &iam.GetPolicyVersionInput{
+			PolicyArn: p.PolicyArn,
+			VersionId: pv.Policy.DefaultVersionId,
+		})
+		if err != nil {
+			continue
+		}
+		decoded, _ := url.QueryUnescape(aws.ToString(pvOut.PolicyVersion.Document))
+		stmts = append(stmts, parseStatements(decoded)...)
+	}
+
+	return stmts, nil
+}
+
+// parseStatements decodes a JSON IAM policy document into PolicyStatements.
+func parseStatements(document string) []PolicyStatement {
+	var doc struct {
+		Statement []struct {
+			Effect   string          `json:"Effect"`
+			Action   json.RawMessage `json:"Action"`
+			Resource json.RawMessage `json:"Resource"`
+		} `json:"Statement"`
+	}
+	if err := json.Unmarshal([]byte(document), &doc); err != nil {
+		return nil
+	}
+
+	stmts := make([]PolicyStatement, 0, len(doc.Statement))
+	for _, s := range doc.Statement {
+		stmts = append(stmts, PolicyStatement{
+			Effect:    s.Effect,
+			Actions:   unmarshalStringOrSlice(s.Action),
+			Resources: unmarshalStringOrSlice(s.Resource),
+		})
+	}
+	return stmts
+}
+
+// unmarshalStringOrSlice handles IAM JSON where Action can be a string or []string.
+func unmarshalStringOrSlice(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil {
+		return []string{single}
+	}
+	var multi []string
+	_ = json.Unmarshal(raw, &multi)
+	return multi
+}
+
+// ─── API Gateway V2 ───────────────────────────────────────────────────────────
+
+func (c *FlociClient) APIGatewayV2Routes(ctx context.Context, apiID string) ([]APIRoute, error) {
+	out, err := c.apigw.GetRoutes(ctx, &apigatewayv2.GetRoutesInput{
+		ApiId: aws.String(apiID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting routes for API %q: %w", apiID, err)
+	}
+
+	routes := make([]APIRoute, 0, len(out.Items))
+	for _, r := range out.Items {
+		routes = append(routes, APIRoute{
+			RouteID:  aws.ToString(r.RouteId),
+			RouteKey: aws.ToString(r.RouteKey),
+			Target:   aws.ToString(r.Target),
+		})
+	}
+	return routes, nil
+}

@@ -1,31 +1,18 @@
 package floci
 
-import "context"
+// This file is retained for the DockerClient interface used in integration
+// tests where the real Docker daemon is unavailable and we need a stub.
+// For production use, the Manager shells out to the docker CLI directly.
 
-// DockerClient is the interface for Docker daemon operations.
-// It wraps docker/docker/client.Client to allow test mocking.
+// DockerClient is a thin interface over the docker CLI operations that
+// Manager performs. Implement this to inject a fake in integration tests.
 type DockerClient interface {
-	// ContainerList returns running containers. opts is docker's
-	// container.ListOptions but typed as any to avoid the direct import here.
-	ContainerList(ctx context.Context, opts any) ([]ContainerSummary, error)
+	// RunContainer starts a container and returns its ID.
+	RunContainer(image, name string, portBinding string) (string, error)
 
-	// ContainerStart starts the named container.
-	ContainerStart(ctx context.Context, containerID string) error
+	// StopContainer stops the named container.
+	StopContainer(name string) error
 
-	// ContainerStop stops the named container gracefully.
-	ContainerStop(ctx context.Context, containerID string) error
-}
-
-// ContainerSummary is a minimal projection of a Docker container's state.
-type ContainerSummary struct {
-	ID     string
-	Names  []string
-	Status string // e.g. "running", "exited"
-	Ports  []PortBinding
-}
-
-// PortBinding maps a container port to a host port.
-type PortBinding struct {
-	HostPort      string
-	ContainerPort string
+	// ContainerStatus returns "running", "exited", or "" if not found.
+	ContainerStatus(name string) (string, error)
 }
