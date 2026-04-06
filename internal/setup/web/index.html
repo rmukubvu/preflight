@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>preflight setup</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #0d1117;
+      --surface:    #161b22;
+      --border:     #30363d;
+      --accent:     #58a6ff;
+      --success:    #3fb950;
+      --danger:     #f85149;
+      --warning:    #d29922;
+      --text:       #c9d1d9;
+      --text-muted: #8b949e;
+      --text-head:  #e6edf3;
+      --radius:     6px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      padding: 2rem 1rem 4rem;
+    }
+
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 2rem;
+    }
+
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--text-head);
+      letter-spacing: -0.02em;
+    }
+
+    .logo-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--accent);
+      background: rgba(88, 166, 255, 0.1);
+      border: 1px solid rgba(88, 166, 255, 0.3);
+      border-radius: 2rem;
+      padding: 0.1rem 0.5rem;
+      vertical-align: middle;
+      margin-left: 0.25rem;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .card-title {
+      color: var(--text-head);
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .card-desc {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      margin-bottom: 1.25rem;
+    }
+
+    /* ── Fields ── */
+    .field {
+      margin-bottom: 1rem;
+    }
+
+    .field:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 0.875rem;
+      padding: 0.45rem 0.75rem;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      appearance: none;
+    }
+
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.75rem center;
+      padding-right: 2rem;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+    }
+
+    .field-hint {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+    }
+
+    .field-hint a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .field-hint a:hover {
+      text-decoration: underline;
+    }
+
+    /* ── Provider panels ── */
+    .provider-panel {
+      display: none;
+    }
+
+    .provider-panel.visible {
+      display: block;
+    }
+
+    /* ── Provider pills (status indicators) ── */
+    .provider-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .provider-pill {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.35rem 0.6rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .provider-pill.active {
+      border-color: var(--success);
+      color: var(--success);
+      background: rgba(63, 185, 80, 0.08);
+    }
+
+    /* ── Actions ── */
+    .actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 1rem;
+      padding: 0.5rem 0 0;
+    }
+
+    .btn {
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 600;
+      padding: 0.5rem 1.25rem;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    .btn-primary {
+      background: #238636;
+      border: 1px solid rgba(240, 246, 252, 0.1);
+      color: #fff;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: #2ea043;
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    /* ── Status banner ── */
+    .status-banner {
+      display: none;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      padding: 0.6rem 1rem;
+    }
+
+    .status-banner.success {
+      display: block;
+      background: rgba(63, 185, 80, 0.1);
+      border: 1px solid rgba(63, 185, 80, 0.4);
+      color: var(--success);
+    }
+
+    .status-banner.error {
+      display: block;
+      background: rgba(248, 81, 73, 0.1);
+      border: 1px solid rgba(248, 81, 73, 0.4);
+      color: var(--danger);
+    }
+
+    .error-list {
+      list-style: disc;
+      padding-left: 1.25rem;
+      margin-top: 0.25rem;
+    }
+
+    /* ── Divider ── */
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 1.25rem 0;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 480px) {
+      .actions { flex-direction: column-reverse; align-items: stretch; }
+      .btn { width: 100%; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <!-- Header -->
+    <div class="header">
+      <div>
+        <div class="logo">
+          ⚡ preflight
+          <span class="logo-badge">setup</span>
+        </div>
+        <div class="subtitle">Configure your local infrastructure validator</div>
+      </div>
+    </div>
+
+    <form id="config-form" novalidate>
+
+      <!-- ── LLM Provider ── -->
+      <div class="card">
+        <div class="card-title">AI Diagnosis Provider</div>
+        <div class="card-desc">
+          Used to explain assertion failures and suggest fixes.
+          <code>auto</code> picks the best available provider based on your credentials.
+        </div>
+
+        <div class="field">
+          <label for="provider">Provider</label>
+          <select id="provider" name="provider">
+            <option value="auto">auto — pick the best available (recommended)</option>
+            <option value="bedrock">AWS Bedrock — use existing AWS credentials</option>
+            <option value="claude">Anthropic Claude — best diagnosis quality</option>
+            <option value="openai">OpenAI — GPT-4o or Azure OpenAI</option>
+            <option value="ollama">Ollama — free, local, air-gapped</option>
+            <option value="none">None — disable AI diagnosis</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ── Claude panel ── -->
+      <div class="card provider-panel" id="panel-claude">
+        <div class="card-title">Anthropic Claude</div>
+        <div class="card-desc">Highest quality diagnosis. Uses claude-haiku by default.</div>
+        <div class="field">
+          <label for="claude-api-key">API Key</label>
+          <input type="password" id="claude-api-key"
+                 placeholder="sk-ant-api03-..."
+                 autocomplete="off" spellcheck="false" />
+          <div class="field-hint">
+            Get your key at
+            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">
+              console.anthropic.com
+            </a>
+          </div>
+        </div>
+        <div class="field">
+          <label for="claude-model">Model</label>
+          <input type="text" id="claude-model"
+                 placeholder="claude-haiku-4-5-20251001"
+                 value="claude-haiku-4-5-20251001" />
+          <div class="field-hint">Use <code>claude-sonnet-4-6</code> for deeper multi-service analysis.</div>
+        </div>
+      </div>
+
+      <!-- ── OpenAI panel ── -->
+      <div class="card provider-panel" id="panel-openai">
+        <div class="card-title">OpenAI</div>
+        <div class="card-desc">Also supports Azure OpenAI via the base URL override.</div>
+        <div class="field">
+          <label for="openai-api-key">API Key</label>
+          <input type="password" id="openai-api-key"
+                 placeholder="sk-..."
+                 autocomplete="off" spellcheck="false" />
+          <div class="field-hint">
+            Get your key at
+            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">
+              platform.openai.com
+            </a>
+          </div>
+        </div>
+        <div class="field">
+          <label for="openai-model">Model</label>
+          <input type="text" id="openai-model"
+                 placeholder="gpt-4o-mini" value="gpt-4o-mini" />
+          <div class="field-hint">Use <code>gpt-4o</code> for deeper analysis.</div>
+        </div>
+        <div class="field">
+          <label for="openai-base-url">Base URL <span style="font-weight:400">(optional — for Azure OpenAI)</span></label>
+          <input type="text" id="openai-base-url"
+                 placeholder="https://your-resource.openai.azure.com" />
+        </div>
+      </div>
+
+      <!-- ── Bedrock panel ── -->
+      <div class="card provider-panel" id="panel-bedrock">
+        <div class="card-title">AWS Bedrock</div>
+        <div class="card-desc">
+          Uses your existing AWS credentials — no new API key required.
+          Works with any credential chain: <code>~/.aws/credentials</code>, IAM roles, env vars.
+        </div>
+        <div class="field">
+          <label for="bedrock-region">AWS Region</label>
+          <input type="text" id="bedrock-region"
+                 placeholder="us-east-1" value="us-east-1" />
+        </div>
+        <div class="field">
+          <label for="bedrock-model">Model ID</label>
+          <input type="text" id="bedrock-model"
+                 placeholder="amazon.nova-lite-v1:0"
+                 value="amazon.nova-lite-v1:0" />
+          <div class="field-hint">
+            <code>amazon.nova-lite-v1:0</code> is generally available.
+            Claude on Bedrock requires separate model access approval.
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Ollama panel ── -->
+      <div class="card provider-panel" id="panel-ollama">
+        <div class="card-title">Ollama</div>
+        <div class="card-desc">Free, runs locally, no data leaves your machine. Works air-gapped.</div>
+        <div class="field">
+          <label for="ollama-url">Base URL</label>
+          <input type="text" id="ollama-url"
+                 placeholder="http://localhost:11434"
+                 value="http://localhost:11434" />
+        </div>
+        <div class="field">
+          <label for="ollama-model">Model</label>
+          <input type="text" id="ollama-model"
+                 placeholder="gemma3" value="gemma3" />
+          <div class="field-hint">
+            Any pulled model works: <code>llama3.2</code>, <code>mistral</code>, <code>phi4</code>, etc.
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Floci ── -->
+      <div class="card">
+        <div class="card-title">Floci — Local AWS Emulator</div>
+        <div class="card-desc">
+          Floci is a Quarkus-native AWS emulator. Starts in 24ms, uses 13MB RAM,
+          supports 100% of AWS SDK operations.
+        </div>
+        <div class="field">
+          <label for="floci-image">Docker Image</label>
+          <input type="text" id="floci-image"
+                 value="ghcr.io/floci/floci:latest" />
+        </div>
+        <div class="field">
+          <label for="floci-port">Port</label>
+          <input type="number" id="floci-port"
+                 value="4566" min="1024" max="65535" />
+        </div>
+      </div>
+
+      <!-- ── Stack ── -->
+      <div class="card">
+        <div class="card-title">Stack</div>
+        <div class="card-desc">
+          The IaC project to validate. Leave blank to configure per-run with flags.
+        </div>
+        <div class="field">
+          <label for="stack-type">Type</label>
+          <select id="stack-type">
+            <option value="">— not configured —</option>
+            <option value="cdk">AWS CDK</option>
+            <option value="terraform">Terraform</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="stack-dir">Stack Directory</label>
+          <input type="text" id="stack-dir" placeholder="." />
+          <div class="field-hint">Path relative to where you run <code>preflight</code>.</div>
+        </div>
+      </div>
+
+      <!-- ── Actions ── -->
+      <div id="status-banner" class="status-banner" role="alert"></div>
+
+      <div class="actions" style="margin-top: 1rem;">
+        <button type="submit" id="save-btn" class="btn btn-primary">
+          Save Configuration
+        </button>
+      </div>
+
+    </form>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const $ = id => document.getElementById(id);
+
+      // ── Provider panel toggling ─────────────────────────────────────────────
+
+      function showProviderPanel(provider) {
+        document.querySelectorAll('.provider-panel').forEach(el => {
+          el.classList.remove('visible');
+        });
+        const panel = $('panel-' + provider);
+        if (panel) panel.classList.add('visible');
+      }
+
+      $('provider').addEventListener('change', e => {
+        showProviderPanel(e.target.value);
+      });
+
+      // ── Populate form from config ───────────────────────────────────────────
+
+      function populateForm(cfg) {
+        const llm = cfg.llm || {};
+        const provider = llm.provider || 'auto';
+
+        $('provider').value = provider;
+        showProviderPanel(provider);
+
+        // Claude
+        if (llm.claude) {
+          $('claude-api-key').value = llm.claude.api_key || '';
+          $('claude-model').value = llm.claude.model || 'claude-haiku-4-5-20251001';
+        }
+
+        // OpenAI
+        if (llm.openai) {
+          $('openai-api-key').value = llm.openai.api_key || '';
+          $('openai-model').value = llm.openai.model || 'gpt-4o-mini';
+          $('openai-base-url').value = llm.openai.base_url || '';
+        }
+
+        // Bedrock
+        if (llm.bedrock) {
+          $('bedrock-region').value = llm.bedrock.region || 'us-east-1';
+          $('bedrock-model').value = llm.bedrock.model_id || 'amazon.nova-lite-v1:0';
+        }
+
+        // Ollama
+        if (llm.ollama) {
+          $('ollama-url').value = llm.ollama.base_url || 'http://localhost:11434';
+          $('ollama-model').value = llm.ollama.model || 'gemma3';
+        }
+
+        // Floci
+        if (cfg.floci) {
+          $('floci-image').value = cfg.floci.image || 'ghcr.io/floci/floci:latest';
+          $('floci-port').value = cfg.floci.port || 4566;
+        }
+
+        // Stack
+        if (cfg.stack) {
+          $('stack-type').value = cfg.stack.type || '';
+          $('stack-dir').value = cfg.stack.dir || '';
+        }
+      }
+
+      // ── Collect form into config object ────────────────────────────────────
+
+      function collectForm() {
+        return {
+          version: 1,
+          llm: {
+            provider: $('provider').value,
+            claude: {
+              api_key: $('claude-api-key').value.trim(),
+              model:   $('claude-model').value.trim(),
+            },
+            openai: {
+              api_key:  $('openai-api-key').value.trim(),
+              model:    $('openai-model').value.trim(),
+              base_url: $('openai-base-url').value.trim(),
+            },
+            bedrock: {
+              region:   $('bedrock-region').value.trim(),
+              model_id: $('bedrock-model').value.trim(),
+            },
+            ollama: {
+              base_url: $('ollama-url').value.trim(),
+              model:    $('ollama-model').value.trim(),
+            },
+          },
+          floci: {
+            image: $('floci-image').value.trim(),
+            port:  parseInt($('floci-port').value, 10) || 4566,
+          },
+          stack: {
+            type: $('stack-type').value,
+            dir:  $('stack-dir').value.trim(),
+          },
+        };
+      }
+
+      // ── Status banner ───────────────────────────────────────────────────────
+
+      function showSuccess(msg) {
+        const el = $('status-banner');
+        el.className = 'status-banner success';
+        el.textContent = msg;
+      }
+
+      function showErrors(errors) {
+        const el = $('status-banner');
+        el.className = 'status-banner error';
+
+        if (!errors || errors.length === 0) {
+          el.textContent = 'An unknown error occurred.';
+          return;
+        }
+
+        el.innerHTML = '<strong>Please fix the following:</strong>' +
+          '<ul class="error-list">' +
+          errors.map(e => '<li>' + escHtml(e.field + ': ' + e.message) + '</li>').join('') +
+          '</ul>';
+      }
+
+      function escHtml(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      // ── Load config on page start ────────────────────────────────────────────
+
+      async function loadConfig() {
+        try {
+          const res = await fetch('/api/config');
+          if (!res.ok) return;
+          const cfg = await res.json();
+          populateForm(cfg);
+        } catch (_) {
+          // non-fatal — form already has sensible defaults
+        }
+      }
+
+      // ── Form submit ─────────────────────────────────────────────────────────
+
+      $('config-form').addEventListener('submit', async e => {
+        e.preventDefault();
+
+        const btn = $('save-btn');
+        btn.disabled = true;
+        btn.textContent = 'Saving…';
+
+        const statusEl = $('status-banner');
+        statusEl.className = 'status-banner';
+        statusEl.textContent = '';
+
+        const cfg = collectForm();
+
+        try {
+          const res = await fetch('/api/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cfg),
+          });
+
+          if (res.ok) {
+            showSuccess('✓ Saved! .preflight.yaml written. This window will close…');
+            setTimeout(() => window.close(), 2000);
+            return;
+          }
+
+          if (res.status === 422) {
+            const body = await res.json();
+            showErrors(body.errors);
+          } else {
+            const text = await res.text();
+            showErrors([{ field: 'server', message: text || 'Unexpected error' }]);
+          }
+        } catch (err) {
+          showErrors([{ field: 'network', message: err.message }]);
+        }
+
+        btn.disabled = false;
+        btn.textContent = 'Save Configuration';
+      });
+
+      // ── Init ─────────────────────────────────────────────────────────────────
+
+      loadConfig();
+
+    })();
+  </script>
+</body>
+</html>

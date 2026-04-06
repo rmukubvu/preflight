@@ -1,0 +1,19 @@
+# Build output
+dist/
+preflight
+
+# Config (may contain API keys)
+.preflight.yaml
+
+# Go
+*.test
+coverage.out
+coverage.html
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
