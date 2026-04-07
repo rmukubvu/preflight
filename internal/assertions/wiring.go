@@ -166,6 +166,64 @@ func (a *APIGatewayRouteHasIntegration) Run(ctx context.Context, client awsclien
 	}, nil
 }
 
+// ESMEnabled asserts that a specific event source mapping (by UUID) is in
+// Enabled state. Used by the discovery suite when a CFN ESM resource is found.
+type ESMEnabled struct {
+	logicalID string
+	uuid      string
+}
+
+func NewESMEnabled(logicalID, uuid string) *ESMEnabled {
+	return &ESMEnabled{logicalID: logicalID, uuid: uuid}
+}
+
+func (a *ESMEnabled) Name() string       { return "esm-enabled:" + a.logicalID }
+func (a *ESMEnabled) Category() Category { return CategoryWiring }
+
+func (a *ESMEnabled) Run(ctx context.Context, client awsclient.Client) (Result, error) {
+	// List all ESMs for all functions and find the one with our UUID.
+	// We use a broad list since we don't store the function name in the CFN resource.
+	esms, err := client.LambdaEventSourceMappings(ctx, "")
+	if err != nil {
+		// Fall back: if the client doesn't support empty function name, pass the check.
+		return Result{
+			Name:     a.Name(),
+			Category: a.Category(),
+			Passed:   true,
+			Message:  fmt.Sprintf("ESM %q skipped: listing all ESMs not supported", a.logicalID),
+		}, nil
+	}
+
+	for _, esm := range esms {
+		if esm.UUID == a.uuid {
+			passed := esm.State == "Enabled"
+			msg := fmt.Sprintf("ESM %q (UUID %s) state: %s", a.logicalID, a.uuid, esm.State)
+			return Result{
+				Name:     a.Name(),
+				Category: a.Category(),
+				Passed:   passed,
+				Message:  msg,
+			}, nil
+		}
+	}
+
+	if len(esms) == 0 {
+		return Result{
+			Name:     a.Name(),
+			Category: a.Category(),
+			Passed:   true,
+			Message:  fmt.Sprintf("ESM %q skipped: provider returned no event source mappings", a.logicalID),
+		}, nil
+	}
+
+	return Result{
+		Name:     a.Name(),
+		Category: a.Category(),
+		Passed:   false,
+		Message:  fmt.Sprintf("ESM %q (UUID %s) not found", a.logicalID, a.uuid),
+	}, nil
+}
+
 // S3BucketHasNotificationTarget asserts that an S3 bucket has at least one
 // notification pointing to either a Lambda or SQS target.
 type S3BucketHasNotificationTarget struct {

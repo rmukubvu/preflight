@@ -8,15 +8,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 const (
-	containerName = "preflight-floci"
-	healthPath    = "/_floci/health"
-	healthTimeout = 30 * time.Second
+	containerName      = "preflight-floci"
+	dockerSocketPath   = "/var/run/docker.sock"
+	networkName        = "preflight-floci-network"
+	healthPath         = "/_floci/health"
+	healthTimeout      = 30 * time.Second
 	healthPollInterval = 250 * time.Millisecond
 )
 
@@ -75,14 +79,9 @@ func (m *Manager) Start(ctx context.Context) (time.Duration, error) {
 
 	// Remove any existing stopped container with the same name.
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", containerName).Run()
+	_ = exec.CommandContext(ctx, "docker", "network", "create", networkName).Run()
 
-	cmd := exec.CommandContext(ctx, "docker", "run",
-		"--detach",
-		"--name", containerName,
-		"--publish", fmt.Sprintf("%d:4566", m.port),
-		"--rm", // remove when stopped
-		m.image,
-	)
+	cmd := exec.CommandContext(ctx, "docker", dockerRunArgs(m.image, m.port, resolveDockerSocketHostPath())...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return 0, fmt.Errorf("starting floci container: %w\n%s", err, string(out))
 	}
@@ -92,6 +91,65 @@ func (m *Manager) Start(ctx context.Context) (time.Duration, error) {
 	}
 
 	return time.Since(begin), nil
+}
+
+func dockerRunArgs(image string, port int, hostDockerSocketPath string) []string {
+	args := []string{
+		"run",
+		"--detach",
+		"--name", containerName,
+		"--network", networkName,
+		"--network-alias", containerName,
+		"--publish", fmt.Sprintf("%d:4566", port),
+		"--rm",
+		"--env", "FLOCI_SERVICES_DOCKER_NETWORK=" + networkName,
+	}
+	if hostDockerSocketPath != "" {
+		args = append(args,
+			"--volume", hostDockerSocketPath+":"+dockerSocketPath,
+		)
+	}
+	args = append(args, image)
+	return args
+}
+
+func resolveDockerSocketHostPath() string {
+	if hostPath := dockerHostSocketPathFromEnv(os.Getenv("DOCKER_HOST")); isSocketPath(hostPath) {
+		return hostPath
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		hostPath := filepath.Join(home, ".docker", "run", "docker.sock")
+		if isSocketPath(hostPath) {
+			return hostPath
+		}
+	}
+
+	if isSocketPath(dockerSocketPath) {
+		return dockerSocketPath
+	}
+
+	return ""
+}
+
+func dockerHostSocketPathFromEnv(dockerHost string) string {
+	const unixPrefix = "unix://"
+	if strings.HasPrefix(dockerHost, unixPrefix) {
+		return strings.TrimPrefix(dockerHost, unixPrefix)
+	}
+	return ""
+}
+
+func isSocketPath(path string) bool {
+	if path == "" {
+		return false
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeSocket != 0
 }
 
 // Stop gracefully stops the Floci container.

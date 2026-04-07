@@ -4,11 +4,22 @@ preflight
 
 # Config (may contain API keys)
 .preflight.yaml
+!test/fixtures/cdk-http-sqs-ddb/.preflight.yaml
+!test/fixtures/terraform-http-sqs-ddb/.preflight.yaml
 
 # Go
 *.test
 coverage.out
 coverage.html
+
+# Fixture/tooling artifacts
+**/node_modules/
+**/cdk.out/
+**/.terraform/
+**/.terraform.lock.hcl
+**/build/
+**/*.tfstate
+**/*.tfstate.backup
 
 # macOS
 .DS_Store

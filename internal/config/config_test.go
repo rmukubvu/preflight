@@ -50,6 +50,16 @@ func TestRoundtrip(t *testing.T) {
 	want.LLM.Claude.APIKey = "sk-ant-test"
 	want.Stack.Type = "cdk"
 	want.Stack.Dir = "./infra"
+	want.Assertions.Behavioural.HTTP = []config.HTTPCheckConfig{
+		{
+			API:                 "JobsApi",
+			IntegrationFunction: "JobsHandlerFunction",
+			Method:              "POST",
+			Path:                "/jobs",
+			ExpectedStatus:      202,
+			Body:                `{"id":"job-123"}`,
+		},
+	}
 
 	if err := config.Save(dir, want); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -68,6 +78,15 @@ func TestRoundtrip(t *testing.T) {
 	}
 	if got.Stack.Type != want.Stack.Type {
 		t.Errorf("stack.type: want %q, got %q", want.Stack.Type, got.Stack.Type)
+	}
+	if len(got.Assertions.Behavioural.HTTP) != 1 {
+		t.Fatalf("want 1 behavioural HTTP check, got %d", len(got.Assertions.Behavioural.HTTP))
+	}
+	if got.Assertions.Behavioural.HTTP[0].ExpectedStatus != 202 {
+		t.Errorf("behavioural.http[0].expected_status: want 202, got %d", got.Assertions.Behavioural.HTTP[0].ExpectedStatus)
+	}
+	if got.Assertions.Behavioural.HTTP[0].IntegrationFunction != "JobsHandlerFunction" {
+		t.Errorf("behavioural.http[0].integration_function: want %q, got %q", "JobsHandlerFunction", got.Assertions.Behavioural.HTTP[0].IntegrationFunction)
 	}
 }
 
@@ -225,6 +244,58 @@ func TestValidate(t *testing.T) {
 			name: "floci port 0 is valid (use default)",
 			mutate: func(c *config.Config) {
 				c.Floci.Port = 0
+			},
+		},
+		{
+			name: "behavioural http check is valid",
+			mutate: func(c *config.Config) {
+				c.Assertions.Behavioural.HTTP = []config.HTTPCheckConfig{
+					{
+						API:            "JobsApi",
+						Method:         "POST",
+						Path:           "/jobs",
+						ExpectedStatus: 202,
+					},
+				}
+			},
+		},
+		{
+			name: "behavioural http check requires api reference",
+			mutate: func(c *config.Config) {
+				c.Assertions.Behavioural.HTTP = []config.HTTPCheckConfig{
+					{
+						Method:         "GET",
+						Path:           "/health",
+						ExpectedStatus: 200,
+					},
+				}
+			},
+			wantField: "assertions.behavioural.http[0].api",
+		},
+		{
+			name: "sqs behavioural check requires expected key",
+			mutate: func(c *config.Config) {
+				c.Assertions.Behavioural.SQSToLambdaToDynamo = []config.SQSToLambdaToDynamoDBConfig{
+					{
+						Queue:       "JobQueue",
+						Table:       "JobsTable",
+						MessageBody: `{"id":"job-123"}`,
+					},
+				}
+			},
+			wantField: "assertions.behavioural.sqs_to_lambda_to_dynamodb[0].expected_key",
+		},
+		{
+			name: "sqs behavioural check is valid",
+			mutate: func(c *config.Config) {
+				c.Assertions.Behavioural.SQSToLambdaToDynamo = []config.SQSToLambdaToDynamoDBConfig{
+					{
+						Queue:       "JobQueue",
+						Table:       "JobsTable",
+						MessageBody: `{"id":"job-123"}`,
+						ExpectedKey: map[string]string{"id": "job-123"},
+					},
+				}
 			},
 		},
 	}

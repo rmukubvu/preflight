@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -140,7 +141,10 @@ func runDeploy(ctx context.Context, rc runConfig) error {
 		return fmt.Errorf("creating AWS client: %w", err)
 	}
 
-	suite := buildAssertionSuite(rc)
+	suite, err := buildAssertionSuite(ctx, awsClient, rc)
+	if err != nil {
+		return err
+	}
 	engine := assertions.NewEngine(suite)
 
 	results, _ := engine.RunAll(ctx, awsClient)
@@ -206,22 +210,135 @@ func buildRunner(rc runConfig, endpoint string) Runner {
 	}
 }
 
-func buildAssertionSuite(rc runConfig) []assertions.Assertion {
-	var suite []assertions.Assertion
+func buildAssertionSuite(ctx context.Context, client awsclient.Client, rc runConfig) ([]assertions.Assertion, error) {
+	var (
+		suite     []assertions.Assertion
+		resources []awsclient.StackResource
+		apis      []awsclient.APIDetail
+	)
 
-	// Always include the stack-level structural checks if a stack name is known.
 	if rc.stackName != "" {
-		suite = append(suite,
-			assertions.NewStackDeployed(rc.stackName),
-			assertions.NewResourcesCreateComplete(rc.stackName),
-		)
+		var err error
+		resources, err = client.CloudFormationStackResources(ctx, rc.stackName)
+		if err != nil {
+			return nil, fmt.Errorf("discovering stack resources for %q: %w", rc.stackName, err)
+		}
+		suite = append(suite, assertions.DiscoverSuiteFromResources(rc.stackName, resources)...)
+	}
+
+	if len(rc.cfg.Assertions.Behavioural.HTTP) > 0 {
+		var err error
+		apis, err = client.APIGatewayV2APIs(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing API Gateway APIs: %w", err)
+		}
+	}
+
+	suite = append(suite, buildConfiguredBehaviouralAssertions(rc.cfg.Assertions.Behavioural, resources, apis)...)
+	return suite, nil
+}
+
+func buildConfiguredBehaviouralAssertions(cfg config.BehaviouralConfig, resources []awsclient.StackResource, apis []awsclient.APIDetail) []assertions.Assertion {
+	suite := make([]assertions.Assertion, 0, len(cfg.HTTP)+len(cfg.SQSToLambdaToDynamo))
+
+	for _, check := range cfg.HTTP {
+		apiID := resolveAPIRef(resources, apis, check.API)
+		httpCheck := assertions.NewAPIGatewayHTTPCheck(
+			apiID,
+			strings.ToUpper(strings.TrimSpace(check.Method)),
+			check.Path,
+			[]byte(check.Body),
+			check.ExpectedStatus,
+		).WithHeaders(check.Headers)
+		httpCheck = httpCheck.WithIntegrationLambda(resolveLambdaRef(resources, check.IntegrationFunction))
+		suite = append(suite, httpCheck)
+	}
+
+	for _, check := range cfg.SQSToLambdaToDynamo {
+		queueName := resolveQueueRef(resources, check.Queue)
+		tableName := resolveTableRef(resources, check.Table)
+		queueCheck := assertions.NewSQSToLambdaToDynamoDB(queueName, check.MessageBody, tableName, check.ExpectedKey).
+			WithConsumerLambda(resolveLambdaRef(resources, check.ConsumerFunction))
+		suite = append(suite, queueCheck)
 	}
 
 	return suite
 }
 
+func resolveAPIRef(resources []awsclient.StackResource, apis []awsclient.APIDetail, ref string) string {
+	if resolved := resolvePhysicalResourceID(resources, "AWS::ApiGatewayV2::Api", ref); resolved != ref {
+		for _, api := range apis {
+			if api.APIID == resolved || api.Name == resolved {
+				return api.APIID
+			}
+		}
+	}
+
+	ref = strings.TrimSpace(ref)
+	for _, api := range apis {
+		if api.APIID == ref || api.Name == ref || strings.HasPrefix(api.Name, ref) {
+			return api.APIID
+		}
+	}
+
+	return ref
+}
+
+func resolveQueueRef(resources []awsclient.StackResource, ref string) string {
+	resolved := resolvePhysicalResourceID(resources, "AWS::SQS::Queue", ref)
+	return sqsQueueName(resolved)
+}
+
+func resolveTableRef(resources []awsclient.StackResource, ref string) string {
+	return resolvePhysicalResourceID(resources, "AWS::DynamoDB::Table", ref)
+}
+
+func resolveLambdaRef(resources []awsclient.StackResource, ref string) string {
+	return resolvePhysicalResourceID(resources, "AWS::Lambda::Function", ref)
+}
+
+func resolvePhysicalResourceID(resources []awsclient.StackResource, resourceType, ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+
+	for _, resource := range resources {
+		if resource.Type != resourceType {
+			continue
+		}
+		if resource.LogicalID == ref || resource.PhysicalID == ref {
+			return resource.PhysicalID
+		}
+		if strings.HasPrefix(resource.LogicalID, ref) {
+			return resource.PhysicalID
+		}
+	}
+
+	return ref
+}
+
+func sqsQueueName(ref string) string {
+	if ref == "" {
+		return ""
+	}
+
+	if parts := strings.Split(ref, "/"); len(parts) > 0 {
+		last := parts[len(parts)-1]
+		if last != "" {
+			return last
+		}
+	}
+
+	if parts := strings.Split(ref, ":"); len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+
+	return ref
+}
+
 // ─── minimal style helpers (avoids importing lipgloss in command layer) ───────
 
-func styleAccentText(s string) string  { return "\033[34m" + s + "\033[0m" }
-func stylePassText(s string) string    { return "\033[32m" + s + "\033[0m" }
-func styleMutedText(s string) string   { return "\033[90m" + s + "\033[0m" }
+func styleAccentText(s string) string { return "\033[34m" + s + "\033[0m" }
+func stylePassText(s string) string   { return "\033[32m" + s + "\033[0m" }
+func styleMutedText(s string) string  { return "\033[90m" + s + "\033[0m" }

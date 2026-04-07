@@ -42,7 +42,15 @@ type S3Notification struct {
 
 // APIRoute is a route in an API Gateway V2 API.
 type APIRoute struct {
-	RouteID   string
-	RouteKey  string // e.g. "GET /items" or "$default"
-	Target    string // e.g. "integrations/abc123"
+	RouteID  string
+	RouteKey string // e.g. "GET /items" or "$default"
+	Target   string // e.g. "integrations/abc123"
+}
+
+// APIDetail holds metadata about an API Gateway V2 API.
+type APIDetail struct {
+	APIID       string
+	Name        string
+	Protocol    string // "HTTP" or "WEBSOCKET"
+	Endpoint    string // the invoke URL base
 }

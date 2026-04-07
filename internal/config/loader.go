@@ -42,7 +42,7 @@ func DefaultConfig() Config {
 			},
 		},
 		Floci: FlociConfig{
-			Image: "ghcr.io/floci/floci:latest",
+			Image: "hectorvent/floci:latest",
 			Port:  4566,
 		},
 	}

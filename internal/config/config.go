@@ -5,10 +5,11 @@ package config
 
 // Config is the root configuration object persisted to .preflight.yaml.
 type Config struct {
-	Version int         `yaml:"version"`
-	LLM     LLMConfig   `yaml:"llm"`
-	Floci   FlociConfig `yaml:"floci"`
-	Stack   StackConfig `yaml:"stack"`
+	Version    int              `yaml:"version"`
+	LLM        LLMConfig        `yaml:"llm"`
+	Floci      FlociConfig      `yaml:"floci"`
+	Stack      StackConfig      `yaml:"stack"`
+	Assertions AssertionsConfig `yaml:"assertions,omitempty"`
 }
 
 // LLMConfig holds AI diagnosis provider settings.
@@ -61,6 +62,55 @@ type StackConfig struct {
 	Type   string `yaml:"type,omitempty"`
 	Dir    string `yaml:"dir,omitempty"`
 	CDKApp string `yaml:"cdk_app,omitempty"` // e.g. "npx cdk"
+}
+
+// AssertionsConfig holds user-configured assertion scenarios.
+type AssertionsConfig struct {
+	Behavioural BehaviouralConfig `yaml:"behavioural,omitempty"`
+}
+
+// BehaviouralConfig holds end-to-end behavioural checks that require
+// stack-specific inputs such as request payloads and expected side effects.
+type BehaviouralConfig struct {
+	HTTP                []HTTPCheckConfig             `yaml:"http,omitempty"`
+	SQSToLambdaToDynamo []SQSToLambdaToDynamoDBConfig `yaml:"sqs_to_lambda_to_dynamodb,omitempty"`
+}
+
+// HTTPCheckConfig describes a real HTTP call that should be made against a
+// deployed API Gateway route.
+type HTTPCheckConfig struct {
+	// API references the API Gateway resource by CloudFormation logical ID or
+	// deployed API ID.
+	API string `yaml:"api"`
+
+	// IntegrationFunction optionally names the Lambda integration to invoke as
+	// a local fallback when the emulator cannot expose the API Gateway route.
+	IntegrationFunction string `yaml:"integration_function,omitempty"`
+
+	Method         string            `yaml:"method"`
+	Path           string            `yaml:"path"`
+	ExpectedStatus int               `yaml:"expected_status"`
+	Body           string            `yaml:"body,omitempty"`
+	Headers        map[string]string `yaml:"headers,omitempty"`
+}
+
+// SQSToLambdaToDynamoDBConfig describes a synthetic event that should flow
+// through the queue consumer and leave proof of processing in DynamoDB.
+type SQSToLambdaToDynamoDBConfig struct {
+	// Queue references the SQS resource by CloudFormation logical ID, queue
+	// name, queue ARN, or queue URL.
+	Queue string `yaml:"queue"`
+
+	// Table references the DynamoDB table by CloudFormation logical ID or table
+	// name.
+	Table string `yaml:"table"`
+
+	// ConsumerFunction optionally names the Lambda consumer to invoke as a
+	// local fallback when the emulator does not deliver SQS events via ESM.
+	ConsumerFunction string `yaml:"consumer_function,omitempty"`
+
+	MessageBody string            `yaml:"message_body"`
+	ExpectedKey map[string]string `yaml:"expected_key"`
 }
 
 // ValidProviders is the set of accepted values for LLMConfig.Provider.

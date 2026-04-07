@@ -1,0 +1,44 @@
+# Fixture-local preflight configuration for the CDK smoke project.
+
+version: 1
+
+llm:
+  provider: none
+  bedrock:
+    region: us-east-1
+    model_id: amazon.nova-lite-v1:0
+  claude:
+    model: claude-haiku-4-5-20251001
+  openai:
+    model: gpt-4o-mini
+  ollama:
+    base_url: http://localhost:11434
+    model: gemma3
+
+floci:
+  image: hectorvent/floci:latest
+  port: 4566
+
+stack:
+  type: cdk
+  dir: .
+  cdk_app: node bin/app.js
+
+assertions:
+  behavioural:
+    http:
+      - api: cdk-jobs-api-fixture
+        integration_function: cdk-jobs-handler-fixture
+        method: POST
+        path: /jobs
+        expected_status: 202
+        body: '{"id":"job-123"}'
+        headers:
+          Content-Type: application/json
+    sqs_to_lambda_to_dynamodb:
+      - queue: cdk-job-queue-fixture
+        table: cdk-jobs-table-fixture
+        consumer_function: cdk-jobs-worker-fixture
+        message_body: '{"id":"job-123"}'
+        expected_key:
+          id: job-123

@@ -110,6 +110,7 @@
     input[type="text"],
     input[type="password"],
     input[type="number"],
+    textarea,
     select {
       width: 100%;
       background: var(--bg);
@@ -129,7 +130,14 @@
       padding-right: 2rem;
     }
 
-    input:focus, select:focus {
+    textarea {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      min-height: 9rem;
+      resize: vertical;
+      white-space: pre;
+    }
+
+    input:focus, textarea:focus, select:focus {
       outline: none;
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
@@ -386,9 +394,9 @@
         <div class="field">
           <label for="ollama-model">Model</label>
           <input type="text" id="ollama-model"
-                 placeholder="gemma3" value="gemma3" />
+                 placeholder="gemma4" value="gemma4:e4b" />
           <div class="field-hint">
-            Any pulled model works: <code>llama3.2</code>, <code>mistral</code>, <code>phi4</code>, etc.
+            Any pulled model works: <code>llama3.2</code>, <code>mistral</code>, <code>gemma4</code>, etc.
           </div>
         </div>
       </div>
@@ -403,7 +411,7 @@
         <div class="field">
           <label for="floci-image">Docker Image</label>
           <input type="text" id="floci-image"
-                 value="ghcr.io/floci/floci:latest" />
+                 value="hectorvent/floci:latest" />
         </div>
         <div class="field">
           <label for="floci-port">Port</label>
@@ -430,6 +438,51 @@
           <label for="stack-dir">Stack Directory</label>
           <input type="text" id="stack-dir" placeholder="." />
           <div class="field-hint">Path relative to where you run <code>preflight</code>.</div>
+        </div>
+      </div>
+
+      <!-- ── Behavioural Assertions ── -->
+      <div class="card">
+        <div class="card-title">Behavioural Assertions</div>
+        <div class="card-desc">
+          Configure real end-to-end checks for API Gateway routes and
+          SQS → Lambda → DynamoDB chains. These are optional, stack-specific
+          scenarios that run in addition to the automatically discovered suite.
+        </div>
+        <div class="field">
+          <label for="behavioural-http">HTTP Scenarios <span style="font-weight:400">(JSON array)</span></label>
+          <textarea id="behavioural-http" spellcheck="false" placeholder='[
+  {
+    "api": "JobsApi",
+    "method": "POST",
+    "path": "/jobs",
+    "expected_status": 202,
+    "body": "{\"id\":\"job-123\"}",
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+]'></textarea>
+          <div class="field-hint">
+            <code>api</code> can be the API Gateway logical ID or deployed API ID.
+          </div>
+        </div>
+        <div class="field">
+          <label for="behavioural-sqs">SQS → Lambda → DynamoDB Scenarios <span style="font-weight:400">(JSON array)</span></label>
+          <textarea id="behavioural-sqs" spellcheck="false" placeholder='[
+  {
+    "queue": "JobQueue",
+    "table": "JobsTable",
+    "message_body": "{\"id\":\"job-123\"}",
+    "expected_key": {
+      "id": "job-123"
+    }
+  }
+]'></textarea>
+          <div class="field-hint">
+            <code>queue</code> accepts logical ID, queue name, ARN, or queue URL.
+            <code>table</code> accepts logical ID or deployed table name.
+          </div>
         </div>
       </div>
 
@@ -496,12 +549,12 @@
         // Ollama
         if (llm.ollama) {
           $('ollama-url').value = llm.ollama.base_url || 'http://localhost:11434';
-          $('ollama-model').value = llm.ollama.model || 'gemma3';
+          $('ollama-model').value = llm.ollama.model || 'gemma4:e4b';
         }
 
         // Floci
         if (cfg.floci) {
-          $('floci-image').value = cfg.floci.image || 'ghcr.io/floci/floci:latest';
+          $('floci-image').value = cfg.floci.image || 'hectorvent/floci:latest';
           $('floci-port').value = cfg.floci.port || 4566;
         }
 
@@ -510,11 +563,18 @@
           $('stack-type').value = cfg.stack.type || '';
           $('stack-dir').value = cfg.stack.dir || '';
         }
+
+        const behavioural = (((cfg || {}).assertions || {}).behavioural) || {};
+        $('behavioural-http').value = formatJSONForTextarea(behavioural.http || []);
+        $('behavioural-sqs').value = formatJSONForTextarea(behavioural.sqs_to_lambda_to_dynamodb || []);
       }
 
       // ── Collect form into config object ────────────────────────────────────
 
       function collectForm() {
+        const behaviouralHTTP = parseJSONArrayField('behavioural-http', 'Behavioural HTTP scenarios');
+        const behaviouralSQS = parseJSONArrayField('behavioural-sqs', 'Behavioural SQS scenarios');
+
         return {
           version: 1,
           llm: {
@@ -545,7 +605,38 @@
             type: $('stack-type').value,
             dir:  $('stack-dir').value.trim(),
           },
+          assertions: {
+            behavioural: {
+              http: behaviouralHTTP,
+              sqs_to_lambda_to_dynamodb: behaviouralSQS,
+            },
+          },
         };
+      }
+
+      function parseJSONArrayField(id, label) {
+        const raw = $(id).value.trim();
+        if (!raw) return [];
+
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (err) {
+          throw new Error(label + ' must be valid JSON: ' + err.message);
+        }
+
+        if (!Array.isArray(parsed)) {
+          throw new Error(label + ' must be a JSON array.');
+        }
+
+        return parsed;
+      }
+
+      function formatJSONForTextarea(value) {
+        if (!value || (Array.isArray(value) && value.length === 0)) {
+          return '[]';
+        }
+        return JSON.stringify(value, null, 2);
       }
 
       // ── Status banner ───────────────────────────────────────────────────────
@@ -601,7 +692,15 @@
         statusEl.className = 'status-banner';
         statusEl.textContent = '';
 
-        const cfg = collectForm();
+        let cfg;
+        try {
+          cfg = collectForm();
+        } catch (err) {
+          showErrors([{ field: 'form', message: err.message }]);
+          btn.disabled = false;
+          btn.textContent = 'Save Configuration';
+          return;
+        }
 
         try {
           const res = await fetch('/api/save', {

@@ -73,6 +73,23 @@ func TestHandleSaveConfig_ValidConfig_WritesFile(t *testing.T) {
 	cfg.LLM.Provider = "none"
 	cfg.Stack.Type = "cdk"
 	cfg.Stack.Dir = "./infra"
+	cfg.Assertions.Behavioural.HTTP = []config.HTTPCheckConfig{
+		{
+			API:            "JobsApi",
+			Method:         "POST",
+			Path:           "/jobs",
+			ExpectedStatus: 202,
+			Body:           `{"id":"job-123"}`,
+		},
+	}
+	cfg.Assertions.Behavioural.SQSToLambdaToDynamo = []config.SQSToLambdaToDynamoDBConfig{
+		{
+			Queue:       "JobQueue",
+			Table:       "JobsTable",
+			MessageBody: `{"id":"job-123"}`,
+			ExpectedKey: map[string]string{"id": "job-123"},
+		},
+	}
 
 	body, _ := json.Marshal(cfg)
 	req := httptest.NewRequest(http.MethodPost, "/api/save", bytes.NewReader(body))
@@ -94,6 +111,12 @@ func TestHandleSaveConfig_ValidConfig_WritesFile(t *testing.T) {
 	}
 	if loaded.Stack.Type != "cdk" {
 		t.Errorf("want stack.type cdk, got %q", loaded.Stack.Type)
+	}
+	if len(loaded.Assertions.Behavioural.HTTP) != 1 {
+		t.Fatalf("want 1 saved HTTP behavioural assertion, got %d", len(loaded.Assertions.Behavioural.HTTP))
+	}
+	if len(loaded.Assertions.Behavioural.SQSToLambdaToDynamo) != 1 {
+		t.Fatalf("want 1 saved SQS behavioural assertion, got %d", len(loaded.Assertions.Behavioural.SQSToLambdaToDynamo))
 	}
 }
 
@@ -146,6 +169,29 @@ func TestHandleSaveConfig_MissingAPIKeyForClaude_Returns422(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.LLM.Provider = "claude"
 	cfg.LLM.Claude.APIKey = "" // missing
+
+	body, _ := json.Marshal(cfg)
+	req := httptest.NewRequest(http.MethodPost, "/api/save", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422, got %d", w.Code)
+	}
+}
+
+func TestHandleSaveConfig_InvalidBehaviouralAssertion_Returns422(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	cfg := config.DefaultConfig()
+	cfg.Assertions.Behavioural.HTTP = []config.HTTPCheckConfig{
+		{
+			Method:         "GET",
+			Path:           "/health",
+			ExpectedStatus: 200,
+		},
+	}
 
 	body, _ := json.Marshal(cfg)
 	req := httptest.NewRequest(http.MethodPost, "/api/save", bytes.NewReader(body))

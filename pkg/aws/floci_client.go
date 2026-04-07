@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -22,12 +24,14 @@ import (
 // local AWS emulator. Credentials are fixed test values because Floci does
 // not enforce authentication.
 type FlociClient struct {
-	cfn    *cloudformation.Client
-	lambda *awslambda.Client
-	sqsSvc *sqs.Client
-	s3Svc  *s3.Client
-	iamSvc *iam.Client
-	apigw  *apigatewayv2.Client
+	cfn     *cloudformation.Client
+	lambda  *awslambda.Client
+	sqsSvc  *sqs.Client
+	s3Svc   *s3.Client
+	iamSvc  *iam.Client
+	apigw   *apigatewayv2.Client
+	ddb     *dynamodb.Client
+	baseURL string // e.g. "http://localhost:4566" — used to build invoke URLs
 }
 
 // NewFlociClient constructs a FlociClient targeting baseURL (e.g. "http://localhost:4566").
@@ -56,12 +60,14 @@ func NewFlociClient(baseURL string) (*FlociClient, error) {
 	}
 
 	return &FlociClient{
-		cfn:    cloudformation.NewFromConfig(base),
-		lambda: awslambda.NewFromConfig(base),
-		sqsSvc: sqs.NewFromConfig(base),
-		s3Svc:  s3.NewFromConfig(base),
-		iamSvc: iam.NewFromConfig(base),
-		apigw:  apigatewayv2.NewFromConfig(base),
+		cfn:     cloudformation.NewFromConfig(base),
+		lambda:  awslambda.NewFromConfig(base),
+		sqsSvc:  sqs.NewFromConfig(base),
+		s3Svc:   s3.NewFromConfig(base),
+		iamSvc:  iam.NewFromConfig(base),
+		apigw:   apigatewayv2.NewFromConfig(base),
+		ddb:     dynamodb.NewFromConfig(base),
+		baseURL: baseURL,
 	}, nil
 }
 
@@ -148,9 +154,12 @@ func (c *FlociClient) LambdaFunctionConfig(ctx context.Context, functionName str
 }
 
 func (c *FlociClient) LambdaEventSourceMappings(ctx context.Context, functionName string) ([]EventSourceMapping, error) {
-	out, err := c.lambda.ListEventSourceMappings(ctx, &awslambda.ListEventSourceMappingsInput{
-		FunctionName: aws.String(functionName),
-	})
+	input := &awslambda.ListEventSourceMappingsInput{}
+	if functionName != "" {
+		input.FunctionName = aws.String(functionName)
+	}
+
+	out, err := c.lambda.ListEventSourceMappings(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("listing ESMs for %q: %w", functionName, err)
 	}
@@ -205,6 +214,17 @@ func (c *FlociClient) SQSQueueURL(ctx context.Context, queueName string) (string
 		return "", fmt.Errorf("getting URL for queue %q: %w", queueName, err)
 	}
 	return aws.ToString(out.QueueUrl), nil
+}
+
+func (c *FlociClient) SQSSendMessage(ctx context.Context, queueURL, body string) error {
+	_, err := c.sqsSvc.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(queueURL),
+		MessageBody: aws.String(body),
+	})
+	if err != nil {
+		return fmt.Errorf("sending message to queue %q: %w", queueURL, err)
+	}
+	return nil
 }
 
 // ─── S3 ───────────────────────────────────────────────────────────────────────
@@ -383,4 +403,87 @@ func (c *FlociClient) APIGatewayV2Routes(ctx context.Context, apiID string) ([]A
 		})
 	}
 	return routes, nil
+}
+
+func (c *FlociClient) APIGatewayV2APIs(ctx context.Context) ([]APIDetail, error) {
+	out, err := c.apigw.GetApis(ctx, &apigatewayv2.GetApisInput{})
+	if err != nil {
+		return nil, fmt.Errorf("getting API Gateway APIs: %w", err)
+	}
+
+	apis := make([]APIDetail, 0, len(out.Items))
+	for _, api := range out.Items {
+		apis = append(apis, APIDetail{
+			APIID:    aws.ToString(api.ApiId),
+			Name:     aws.ToString(api.Name),
+			Protocol: string(api.ProtocolType),
+			Endpoint: aws.ToString(api.ApiEndpoint),
+		})
+	}
+
+	return apis, nil
+}
+
+// APIGatewayV2InvokeURL returns the Floci invoke URL for the API.
+// Floci uses the pattern: {baseURL}/restapis/{apiID}/test/_user_request_/
+func (c *FlociClient) APIGatewayV2InvokeURL(ctx context.Context, apiID string) (string, error) {
+	apis, err := c.APIGatewayV2APIs(ctx)
+	if err == nil {
+		if invokeURL := apiGatewayV2InvokeURLFromDetails(apis, apiID); invokeURL != "" {
+			return invokeURL, nil
+		}
+	}
+
+	return fmt.Sprintf("%s/restapis/%s/test/_user_request_", c.baseURL, apiID), nil
+}
+
+func apiGatewayV2InvokeURLFromDetails(apis []APIDetail, ref string) string {
+	for _, api := range apis {
+		if api.APIID == ref || api.Name == ref {
+			return api.Endpoint
+		}
+	}
+	return ""
+}
+
+// ─── DynamoDB ─────────────────────────────────────────────────────────────────
+
+func (c *FlociClient) DynamoDBTableExists(ctx context.Context, tableName string) (bool, error) {
+	_, err := c.ddb.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(tableName),
+	})
+	if err != nil {
+		var ae smithy.APIError
+		if errors.As(err, &ae) && ae.ErrorCode() == "ResourceNotFoundException" {
+			return false, nil
+		}
+		return false, fmt.Errorf("describing table %q: %w", tableName, err)
+	}
+	return true, nil
+}
+
+func (c *FlociClient) DynamoDBGetItem(ctx context.Context, tableName string, key map[string]string) (map[string]string, error) {
+	ddbKey := make(map[string]ddbtypes.AttributeValue, len(key))
+	for k, v := range key {
+		ddbKey[k] = &ddbtypes.AttributeValueMemberS{Value: v}
+	}
+
+	out, err := c.ddb.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key:       ddbKey,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting item from table %q: %w", tableName, err)
+	}
+	if out.Item == nil {
+		return nil, nil
+	}
+
+	result := make(map[string]string, len(out.Item))
+	for k, v := range out.Item {
+		if sv, ok := v.(*ddbtypes.AttributeValueMemberS); ok {
+			result[k] = sv.Value
+		}
+	}
+	return result, nil
 }

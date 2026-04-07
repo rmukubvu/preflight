@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // CDKRunner deploys a CDK stack to Floci by overriding AWS endpoint environment
 // variables so that `cdk deploy` targets localhost instead of real AWS.
 type CDKRunner struct {
-	dir          string
-	stackName    string
+	dir           string
+	stackName     string
 	flociEndpoint string
-	cdkApp       string // optional: override the CDK app command
+	cdkApp        string // optional: override the CDK app command
 }
 
 // NewCDKRunner constructs a CDKRunner.
@@ -37,7 +38,7 @@ func (r *CDKRunner) Deploy(ctx context.Context) error {
 		args = append(args, r.stackName)
 	}
 
-	cdkBin, err := findCDK()
+	cdkBin, prefixArgs, err := findCDK(r.dir)
 	if err != nil {
 		return err
 	}
@@ -45,6 +46,7 @@ func (r *CDKRunner) Deploy(ctx context.Context) error {
 	if r.cdkApp != "" {
 		args = append([]string{"--app", r.cdkApp}, args...)
 	}
+	args = append(prefixArgs, args...)
 
 	cmd := exec.CommandContext(ctx, cdkBin, args...)
 	cmd.Dir = r.dir
@@ -58,15 +60,28 @@ func (r *CDKRunner) Deploy(ctx context.Context) error {
 	return nil
 }
 
-// findCDK locates the cdk executable. It prefers npx cdk over a global install.
-func findCDK() (string, error) {
-	if path, err := exec.LookPath("cdk"); err == nil {
-		return path, nil
+// findCDK locates the cdk executable.
+// Preference order:
+// 1. project-local node_modules/.bin/cdk
+// 2. npx cdk
+// 3. global cdk install
+func findCDK(dir string) (string, []string, error) {
+	localCDK := filepath.Join(dir, "node_modules", ".bin", "cdk")
+	if fileExists(localCDK) {
+		return localCDK, nil, nil
 	}
-	if path, err := exec.LookPath("npx"); err == nil {
-		return path, nil // caller should prepend "cdk" as first arg
+
+	return findCDKWithLookPath(exec.LookPath)
+}
+
+func findCDKWithLookPath(lookPath func(string) (string, error)) (string, []string, error) {
+	if path, err := lookPath("npx"); err == nil {
+		return path, []string{"cdk"}, nil
 	}
-	return "", fmt.Errorf("cdk not found — install via: npm install -g aws-cdk")
+	if path, err := lookPath("cdk"); err == nil {
+		return path, nil, nil
+	}
+	return "", nil, fmt.Errorf("cdk not found — install via: npm install -g aws-cdk")
 }
 
 // flociEnv returns the environment variables needed to redirect AWS SDK

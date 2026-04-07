@@ -2,7 +2,7 @@ BINARY    := preflight
 BUILD_DIR := dist
 GO        := /usr/local/go/bin/go
 
-.PHONY: all build test test-unit test-cover lint fmt clean run-setup tidy help
+.PHONY: all build test test-unit test-cover lint fmt clean run-setup tidy smoke-cdk-fixture smoke-terraform-fixture smoke-fixtures help
 
 all: build
 
@@ -45,6 +45,18 @@ run-setup: build
 ## tidy: tidy module dependencies
 tidy:
 	$(GO) mod tidy
+
+## smoke-cdk-fixture: run preflight against the CDK smoke fixture
+smoke-cdk-fixture:
+	bash ./scripts/smoke-fixtures.sh cdk
+
+## smoke-terraform-fixture: run preflight against the Terraform smoke fixture
+smoke-terraform-fixture:
+	bash ./scripts/smoke-fixtures.sh terraform
+
+## smoke-fixtures: run all smoke fixtures
+smoke-fixtures:
+	bash ./scripts/smoke-fixtures.sh all
 
 ## help: print available targets
 help:

@@ -159,6 +159,32 @@ func (a *S3BucketExists) Run(ctx context.Context, client awsclient.Client) (Resu
 	}, nil
 }
 
+// DynamoDBTableExists asserts that a specific DynamoDB table was created.
+type DynamoDBTableExists struct {
+	tableName string
+}
+
+func NewDynamoDBTableExists(tableName string) *DynamoDBTableExists {
+	return &DynamoDBTableExists{tableName: tableName}
+}
+
+func (a *DynamoDBTableExists) Name() string     { return "dynamodb-table-exists:" + a.tableName }
+func (a *DynamoDBTableExists) Category() Category { return CategoryStructural }
+
+func (a *DynamoDBTableExists) Run(ctx context.Context, client awsclient.Client) (Result, error) {
+	exists, err := client.DynamoDBTableExists(ctx, a.tableName)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{
+		Name:       a.Name(),
+		Category:   a.Category(),
+		Passed:     exists,
+		Message:    fmt.Sprintf("DynamoDB table %q exists: %v", a.tableName, exists),
+		ResourceID: a.tableName,
+	}, nil
+}
+
 // isCompleteStatus returns true when a CloudFormation resource status
 // represents a successful terminal state.
 func isCompleteStatus(status string) bool {

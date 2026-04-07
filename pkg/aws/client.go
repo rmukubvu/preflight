@@ -41,6 +41,10 @@ type Client interface {
 	// SQSQueueURL returns the URL of the named queue.
 	SQSQueueURL(ctx context.Context, queueName string) (string, error)
 
+	// SQSSendMessage sends a message body to the queue URL.
+	// Used by behavioural assertions that exercise queue-driven flows.
+	SQSSendMessage(ctx context.Context, queueURL, body string) error
+
 	// ─── S3 ───────────────────────────────────────────────────────────────────
 
 	// S3BucketExists reports whether the named bucket exists.
@@ -63,6 +67,23 @@ type Client interface {
 
 	// APIGatewayV2Routes returns all routes in the named HTTP API.
 	APIGatewayV2Routes(ctx context.Context, apiID string) ([]APIRoute, error)
+
+	// APIGatewayV2APIs returns all API Gateway v2 APIs visible in Floci.
+	APIGatewayV2APIs(ctx context.Context) ([]APIDetail, error)
+
+	// APIGatewayV2InvokeURL returns the HTTP base URL for invoking the API.
+	// Used by behavioural assertions to make real HTTP calls against Floci.
+	APIGatewayV2InvokeURL(ctx context.Context, apiID string) (string, error)
+
+	// ─── DynamoDB ─────────────────────────────────────────────────────────────
+
+	// DynamoDBTableExists reports whether the named table exists.
+	DynamoDBTableExists(ctx context.Context, tableName string) (bool, error)
+
+	// DynamoDBGetItem retrieves a single item by its string-valued key attributes.
+	// key maps attribute name to string value (e.g. {"id": "msg-123"}).
+	// Returns the item as a string map, or nil when not found.
+	DynamoDBGetItem(ctx context.Context, tableName string, key map[string]string) (map[string]string, error)
 }
 
 // FlociEndpoint is the default Floci base URL.

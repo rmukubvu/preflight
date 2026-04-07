@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ValidationError describes a single configuration field violation.
 type ValidationError struct {
@@ -61,6 +64,38 @@ func Validate(cfg Config) []ValidationError {
 	// Floci port must be in the unprivileged range when set.
 	if cfg.Floci.Port != 0 && (cfg.Floci.Port < 1024 || cfg.Floci.Port > 65535) {
 		add("floci.port", fmt.Sprintf("must be between 1024 and 65535; got %d", cfg.Floci.Port))
+	}
+
+	for i, check := range cfg.Assertions.Behavioural.HTTP {
+		prefix := fmt.Sprintf("assertions.behavioural.http[%d]", i)
+		if strings.TrimSpace(check.API) == "" {
+			add(prefix+".api", "required")
+		}
+		if strings.TrimSpace(check.Method) == "" {
+			add(prefix+".method", "required")
+		}
+		if strings.TrimSpace(check.Path) == "" {
+			add(prefix+".path", "required")
+		}
+		if check.ExpectedStatus <= 0 {
+			add(prefix+".expected_status", "must be greater than 0")
+		}
+	}
+
+	for i, check := range cfg.Assertions.Behavioural.SQSToLambdaToDynamo {
+		prefix := fmt.Sprintf("assertions.behavioural.sqs_to_lambda_to_dynamodb[%d]", i)
+		if strings.TrimSpace(check.Queue) == "" {
+			add(prefix+".queue", "required")
+		}
+		if strings.TrimSpace(check.Table) == "" {
+			add(prefix+".table", "required")
+		}
+		if strings.TrimSpace(check.MessageBody) == "" {
+			add(prefix+".message_body", "required")
+		}
+		if len(check.ExpectedKey) == 0 {
+			add(prefix+".expected_key", "must contain at least one key attribute")
+		}
 	}
 
 	return errs
