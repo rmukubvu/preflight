@@ -3,6 +3,26 @@
 Validate CDK and Terraform stacks against a local AWS emulator before deploying
 to AWS.
 
+Stratus emulates your AWS stack locally. Preflight verifies that it actually
+works before you deploy.
+
+Together, Stratus and Preflight give developers a credible local AWS delivery
+loop.
+
+What Stratus solves:
+
+- run AWS-shaped infrastructure locally
+- use real tooling like AWS CLI, SDKs, and CDK
+- get fast feedback without deploying to AWS
+- reproduce failures in a deterministic environment
+
+What Preflight solves:
+
+- prove the stack actually works, not just that resources were created
+- validate structure, wiring, IAM, and behavior from the outside
+- add diagnosis when something fails
+- catch compatibility regressions before cloud deployment
+
 `preflight` deploys your infrastructure locally and checks four layers before
 you touch a real AWS account:
 
