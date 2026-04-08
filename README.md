@@ -1,32 +1,57 @@
 # preflight
 
-Validate CDK and Terraform stacks against Floci before deploying to AWS.
+Validate CDK and Terraform stacks against a local AWS emulator before deploying
+to AWS.
 
-`preflight` runs your infrastructure locally against [Floci](https://floci.io/), deploys the stack, and checks four layers before you touch AWS:
+`preflight` deploys your infrastructure locally and checks four layers before
+you touch a real AWS account:
 
 - Structural: did the expected resources get created?
 - Wiring: are routes, event source mappings, and triggers connected?
 - IAM: do the Lambda roles have the permissions the flow needs?
 - Behavioural: does the actual request or event path work end to end?
 
-For a CDK project, the target local POC path is:
+For the current smoke fixtures, the primary behavioural path is:
 
 ```text
 API Gateway -> Lambda -> SQS -> Lambda -> DynamoDB
 ```
 
+## Current State
+
+`preflight` is in transition from a Floci-first tool to an emulator-oriented
+validator.
+
+What is true today:
+
+- the root CLI exists at `cmd/preflight/main.go`
+- the smoke harness can run against `stratus` or `floci`
+- the smoke harness defaults to `stratus`
+- the setup/config surface still carries a legacy `floci:` block for
+  compatibility
+- the direct `preflight deploy` command path is still Floci-backed internally
+
+So the practical rule is:
+
+- use the smoke harness for `stratus`
+- use direct `preflight deploy` when you want the older Floci-backed flow
+
+That split is temporary, but it is the honest current state of the repo.
+
 ## What You Need
 
 - Go `1.23+`
 - Docker Desktop or a working Docker daemon
-- A CDK app that can already synthesize locally
-- Node.js and npm if your CDK project is TypeScript/JavaScript
-- AWS CDK CLI available either:
+- A CDK app that can already synthesize locally, or a Terraform/OpenTofu module
+- Node.js and npm for JavaScript/TypeScript CDK projects
+- AWS CLI for smoke fixture seeding
+- The AWS CDK CLI available either:
   - in your project at `node_modules/.bin/cdk`
   - via `npx cdk`
   - or globally as `cdk`
 
-`preflight` starts Floci in Docker and points the deploy to it with local test credentials. You do not need a real AWS account for the local validation flow.
+For `stratus` validation, you also need a `stratus` binary or checkout available
+locally.
 
 ## Install
 
@@ -38,13 +63,13 @@ cd preflight
 make build
 ```
 
-The binary will be available at:
+The binary will be:
 
 ```bash
 ./dist/preflight
 ```
 
-You can also run the setup UI directly:
+Run the setup UI:
 
 ```bash
 make run-setup
@@ -58,138 +83,93 @@ make run-setup
 ./dist/preflight deploy --help
 ```
 
-Main workflow:
+Main manual workflow:
 
 ```bash
 ./dist/preflight setup
 ./dist/preflight deploy --stack-name MyStack --no-ai
 ```
 
-## CDK Quickstart
+## Two Runtime Modes
 
-This is the shortest path if you already have a working CDK project.
+### 1. Floci-backed CLI deploy path
 
-### 1. Open the setup UI
-
-From your CDK project directory:
-
-```bash
-preflight setup
-```
-
-This creates `.preflight.yaml` in the current directory.
-
-If you do not want a browser to open automatically:
-
-```bash
-BROWSER=echo preflight setup
-```
-
-### 2. Fill in the stack settings
-
-For CDK, the important fields are:
-
-- `stack.type: cdk`
-- `stack.dir: .`
-- `stack.cdk_app`: your CDK app command, for example:
-  - `npx cdk`
-  - `node bin/app.js`
-  - `npx ts-node --prefer-ts-exts bin/app.ts`
-
-If your project already has a local CDK CLI in `node_modules/.bin/cdk`, `preflight` prefers that automatically.
-
-### 3. Add behavioural assertions
-
-Structural, wiring, and IAM checks can be discovered from deployed resources.
-
-Behavioural checks are stack-specific, so you need to tell `preflight` what a real success path looks like. For a common HTTP plus queue flow, add:
-
-```yaml
-version: 1
-
-llm:
-  provider: none
-
-floci:
-  image: hectorvent/floci:latest
-  port: 4566
-
-stack:
-  type: cdk
-  dir: .
-  cdk_app: npx cdk
-
-assertions:
-  behavioural:
-    http:
-      - api: JobsApi
-        integration_function: JobsHandlerFunction
-        method: POST
-        path: /jobs
-        expected_status: 202
-        body: '{"id":"job-123"}'
-        headers:
-          Content-Type: application/json
-
-    sqs_to_lambda_to_dynamodb:
-      - queue: JobQueue
-        table: JobsTable
-        consumer_function: WorkerFunction
-        message_body: '{"id":"job-123"}'
-        expected_key:
-          id: job-123
-```
-
-### 4. Run the local validation
-
-```bash
-preflight deploy --stack-name MyStack --no-ai
-```
-
-If everything works, you will see a summary like:
-
-```text
-✓ STRUCTURAL
-✓ WIRING
-✓ IAM
-✓ BEHAVIOURAL
-
-✓ All assertions passed. Safe to deploy to AWS.
-```
-
-## How CDK Local Validation Works
+This is the older built-in path.
 
 When you run:
 
 ```bash
-preflight deploy --stack-name MyStack
+./dist/preflight deploy --stack-name MyStack --no-ai
 ```
 
-`preflight` does this:
+`preflight` currently:
 
-1. Starts Floci in Docker if it is not already running.
-2. Sets local AWS environment variables so CDK deploys to Floci instead of AWS.
-3. Runs `cdk deploy --require-approval never`.
-4. Discovers deployed resources from CloudFormation.
-5. Runs assertion suites in parallel.
-6. Prints a pass/fail summary.
+1. loads `.preflight.yaml`
+2. starts Floci in Docker if needed
+3. deploys the CDK or Terraform stack into that local endpoint
+4. discovers resources
+5. runs structural, wiring, IAM, and behavioural assertions
 
-The deploy is redirected with environment variables like:
+This path is still what the main deploy command is wired to internally.
 
-```text
-AWS_ENDPOINT_URL=http://localhost:4566
-AWS_ACCESS_KEY_ID=test
-AWS_SECRET_ACCESS_KEY=test
-AWS_DEFAULT_REGION=us-east-1
-CDK_DEFAULT_ACCOUNT=000000000000
-CDK_DEFAULT_REGION=us-east-1
+### 2. Emulator smoke harness
+
+This is the best path today for validating `stratus`.
+
+The smoke harness is:
+
+- [`scripts/smoke-fixtures.sh`](/Users/robson/code/preflight/scripts/smoke-fixtures.sh)
+
+It supports:
+
+- `EMULATOR_TYPE=stratus`
+- `EMULATOR_TYPE=floci`
+
+It defaults to:
+
+```bash
+EMULATOR_TYPE=stratus
+EMULATOR_ENDPOINT=http://localhost:4566
+EMULATOR_COMMAND=stratus
 ```
 
-## Behavioural Config Explained
+This is the path used for the current `stratus` integration smoke.
+
+## CDK Quickstart
+
+If you already have a working CDK app, the shortest path is:
+
+```bash
+cd /path/to/your-cdk-app
+preflight setup
+preflight deploy --stack-name YourStackName --no-ai
+```
+
+Or explicitly:
+
+```bash
+preflight deploy --stack-type cdk --dir /path/to/your-cdk-app --stack-name YourStackName --no-ai
+```
+
+Important setup fields:
+
+- `stack.type: cdk`
+- `stack.dir: .`
+- `stack.cdk_app`: for example:
+  - `npx cdk`
+  - `node bin/app.js`
+  - `npx ts-node --prefer-ts-exts bin/app.ts`
+
+If your project has a local CDK CLI in `node_modules/.bin/cdk`, `preflight`
+prefers that automatically.
+
+## Behavioural Assertions
+
+Structural, wiring, and IAM checks can be discovered from deployed resources.
+Behavioural checks are stack-specific, so you need to define what “real success”
+means for your application.
 
 ### HTTP checks
-
-Each HTTP behavioural check tells `preflight` to make a real request and verify the expected response code.
 
 Fields:
 
@@ -201,15 +181,7 @@ Fields:
 - `body`: optional request body
 - `headers`: optional request headers
 
-The `integration_function` field matters locally because some emulators do not reliably expose API Gateway invoke URLs even when the route and integration exist. In that case, `preflight` can still validate the integration Lambda path.
-
 ### SQS -> Lambda -> DynamoDB checks
-
-Each queue behavioural check:
-
-1. sends a real message to SQS
-2. waits for the side effect in DynamoDB
-3. optionally falls back to a direct consumer Lambda invoke if the emulator does not deliver the event source mapping cleanly
 
 Fields:
 
@@ -222,28 +194,6 @@ Fields:
 Example:
 
 ```yaml
-assertions:
-  behavioural:
-    sqs_to_lambda_to_dynamodb:
-      - queue: JobQueue
-        table: JobsTable
-        consumer_function: WorkerFunction
-        message_body: '{"id":"job-123"}'
-        expected_key:
-          id: job-123
-```
-
-That means:
-
-- push `{"id":"job-123"}` into the queue
-- wait for the worker to process it
-- pass only if an item with partition key `id=job-123` appears in DynamoDB
-
-## Example `.preflight.yaml` for CDK
-
-This is a practical starter config:
-
-```yaml
 version: 1
 
 llm:
@@ -279,47 +229,124 @@ assertions:
           id: job-123
 ```
 
-## Recommended CDK Conventions
+Note the legacy `floci:` key. That is still what the saved config schema uses
+today, even though the smoke harness can target `stratus`.
 
-`preflight` works best when your stack uses stable, intentional names.
+## Using preflight With stratus
 
-Recommended:
+The validated `stratus` path today is the smoke harness, not the older direct
+deploy path.
 
-- give queues, tables, APIs, and functions explicit names where practical
-- keep your CDK logical IDs readable
-- make the DynamoDB side effect easy to assert with a deterministic key
-- use a single request payload that can be replayed safely in local runs
-
-That makes the behavioural config straightforward and maintainable.
-
-## Running From an Existing CDK App
-
-If your CDK project lives elsewhere, you do not have to move it into this repo.
-
-Typical flow:
+From the `preflight` repo root:
 
 ```bash
-cd /path/to/your-cdk-app
-preflight setup
-preflight deploy --stack-name YourStackName --no-ai
+bash ./scripts/smoke-fixtures.sh cdk
 ```
 
-Or if you want to point to a different directory explicitly:
+That defaults to `stratus`. You can point it at a specific binary and endpoint:
 
 ```bash
-preflight deploy --stack-type cdk --dir /path/to/your-cdk-app --stack-name YourStackName --no-ai
+EMULATOR_TYPE=stratus \
+EMULATOR_COMMAND=/path/to/stratus \
+EMULATOR_ENDPOINT=http://127.0.0.1:4567 \
+EMULATOR_PORT=4567 \
+bash ./scripts/smoke-fixtures.sh cdk
 ```
+
+What the harness does:
+
+1. builds `preflight`
+2. starts the chosen emulator
+3. seeds fixture assets for the CDK stack
+4. runs `preflight deploy`
+5. passes emulator overrides through:
+   - `PREFLIGHT_EMULATOR_TYPE`
+   - `PREFLIGHT_EMULATOR_COMMAND`
+   - `PREFLIGHT_EMULATOR_ENDPOINT`
+   - `PREFLIGHT_EMULATOR_PORT`
+
+These overrides are currently the bridge between the old config surface and the
+new emulator-oriented validation path.
+
+## Using preflight With Floci
+
+If you want the legacy container-backed path explicitly:
+
+```bash
+EMULATOR_TYPE=floci bash ./scripts/smoke-fixtures.sh cdk
+```
+
+Or just use:
+
+```bash
+./dist/preflight deploy --stack-name MyStack --no-ai
+```
+
+That direct deploy path still starts Floci internally.
+
+## Smoke Fixtures
+
+This repo includes two smoke fixtures:
+
+- CDK: [`test/fixtures/cdk-http-sqs-ddb`](/Users/robson/code/preflight/test/fixtures/cdk-http-sqs-ddb)
+- Terraform: [`test/fixtures/terraform-http-sqs-ddb`](/Users/robson/code/preflight/test/fixtures/terraform-http-sqs-ddb)
+
+Run them from the repo root:
+
+```bash
+./scripts/smoke-fixtures.sh cdk
+./scripts/smoke-fixtures.sh terraform
+./scripts/smoke-fixtures.sh all
+```
+
+Or with `make`:
+
+```bash
+make smoke-cdk-fixture
+make smoke-terraform-fixture
+make smoke-fixtures
+```
+
+The fixture overview lives in:
+
+- [`test/fixtures/README.md`](/Users/robson/code/preflight/test/fixtures/README.md)
+
+## How the CDK Smoke Works
+
+The CDK fixture:
+
+- prebuilds Lambda zip assets
+- uploads them to a local S3 bucket on the emulator
+- deploys the stack
+- runs HTTP and queue-driven behavioural assertions
+
+The fixture also now passes a Docker-reachable emulator endpoint into the Lambda
+functions so it can work with `stratus` on non-default ports instead of
+hardcoding `host.docker.internal:4566`.
 
 ## Output and Exit Codes
 
-- Exit code `0`: all assertions passed
-- Exit code `1`: one or more assertions failed
+- exit code `0`: all assertions passed
+- exit code `1`: one or more assertions failed
 
 You can also write a JSON report:
 
 ```bash
 preflight deploy --stack-name MyStack --report preflight-report.json --no-ai
 ```
+
+## Recommended Conventions
+
+`preflight` works best when your stack uses stable, intentional names.
+
+Recommended:
+
+- give queues, tables, APIs, and functions explicit names where practical
+- keep CDK logical IDs readable
+- make DynamoDB side effects easy to assert with a deterministic key
+- use replay-safe request payloads for local runs
+
+That keeps behavioural config small and maintainable.
 
 ## Troubleshooting
 
@@ -331,49 +358,36 @@ Install the CDK CLI or add it locally:
 npm install --save-dev aws-cdk
 ```
 
-### Floci does not start
+### The emulator does not start
 
 Check:
 
-- Docker Desktop is running
+- Docker is running if you are using Floci
 - your Docker socket is available
-- port `4566` is free, or change `floci.port`
+- the target port is free
+- `EMULATOR_COMMAND` points to a valid `stratus` binary if using `stratus`
 
-### My stack deploys but behavioural checks fail
+### Behavioural checks fail even though resources exist
 
-That usually means one of:
+Usually one of:
 
 - the request payload does not match your app contract
 - the expected HTTP status is wrong
 - the queue consumer is not writing the expected DynamoDB key
-- the local emulator needs the fallback Lambda fields:
+- the emulator needs a fallback Lambda field:
   - `integration_function`
   - `consumer_function`
 
-### API Gateway route exists but HTTP behaviour still fails locally
+### API Gateway route exists but the HTTP behaviour fails locally
 
-Use `integration_function` on the HTTP assertion. Some local emulators provision the route metadata but do not expose a stable invoke path.
+Use `integration_function` on the HTTP assertion. That lets `preflight`
+validate the Lambda-backed path even when the local API invoke surface is less
+reliable than real AWS.
 
 ### SQS wiring exists but the item never appears in DynamoDB
 
-Use `consumer_function` on the SQS assertion. This lets `preflight` validate the queue consumer path even if the local event source mapping delivery is inconsistent.
-
-## Smoke Fixtures
-
-This repo includes local smoke fixtures:
-
-- CDK: [test/fixtures/cdk-http-sqs-ddb](/Users/robson/code/preflight/test/fixtures/cdk-http-sqs-ddb)
-- Terraform: [test/fixtures/terraform-http-sqs-ddb](/Users/robson/code/preflight/test/fixtures/terraform-http-sqs-ddb)
-
-Run them from the repo root:
-
-```bash
-make smoke-cdk-fixture
-make smoke-terraform-fixture
-make smoke-fixtures
-```
-
-The CDK smoke fixture currently proves the full local behavioural POC path.
+Use `consumer_function` on the SQS assertion. That gives `preflight` a direct
+fallback to validate the consumer path.
 
 ## Developer Commands
 
@@ -384,14 +398,29 @@ make test-unit
 make lint
 make fmt
 make run-setup
+make tidy
 ```
 
 ## Current Scope
 
-Today the strongest local path is CDK:
+Today the strongest local path is:
 
-- CDK local deploy to Floci works
-- structural, wiring, IAM, and behavioural checks run
-- the full behavioural POC path passes locally in the CDK smoke fixture
+- CDK fixture deployment
+- structural, wiring, IAM, and behavioural assertions
+- `stratus` validation through the smoke harness
+- Floci validation through the direct deploy path and smoke harness
 
-Terraform support exists, but the current Terraform smoke fixture still hits Floci/provider compatibility gaps around Lambda code-signing reads and API Gateway v2 stage creation.
+Terraform support exists, but it is still less mature than the CDK path.
+
+## Summary
+
+`preflight` should be thought of as the external validation harness around a
+local AWS emulator, not as emulator implementation code itself.
+
+Today:
+
+- direct CLI deploy is still Floci-backed
+- the smoke harness is the best path for `stratus`
+- the repo is moving toward a cleaner emulator-oriented model
+
+That is the state this README now documents.
