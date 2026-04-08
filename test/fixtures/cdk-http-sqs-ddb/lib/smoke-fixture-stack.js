@@ -15,6 +15,15 @@ const jobQueueName = "cdk-job-queue-fixture";
 const jobsTableName = "cdk-jobs-table-fixture";
 const workerAssetKey = process.env.WORKER_ASSET_KEY || "worker.zip";
 const workerFunctionName = "cdk-jobs-worker-fixture";
+const defaultEmulatorEndpoint = "http://host.docker.internal:4566";
+
+function dockerReachableEndpoint(rawEndpoint) {
+  const endpoint = new URL(rawEndpoint || defaultEmulatorEndpoint);
+  if (endpoint.hostname === "127.0.0.1" || endpoint.hostname === "localhost") {
+    endpoint.hostname = "host.docker.internal";
+  }
+  return endpoint.toString().replace(/\/$/, "");
+}
 
 class SmokeFixtureStack extends cdk.Stack {
   constructor(scope, id, props) {
@@ -28,6 +37,8 @@ class SmokeFixtureStack extends cdk.Stack {
       "FixtureAssetsBucket",
       assetBucketName,
     );
+    const emulatorEndpoint = dockerReachableEndpoint(process.env.EMULATOR_ENDPOINT);
+    const queueUrl = `${emulatorEndpoint}/000000000000/${jobQueueName}`;
 
     const table = new dynamodb.Table(this, "JobsTable", {
       partitionKey: {
@@ -50,6 +61,10 @@ class SmokeFixtureStack extends cdk.Stack {
       handler: "index.handler",
       timeout: cdk.Duration.seconds(30),
       code: lambda.Code.fromBucket(assetsBucket, jobsHandlerAssetKey),
+      environment: {
+        EMULATOR_ENDPOINT: emulatorEndpoint,
+        QUEUE_URL: queueUrl,
+      },
     });
 
     const workerFunction = new lambda.Function(this, "WorkerFunction", {
@@ -58,6 +73,10 @@ class SmokeFixtureStack extends cdk.Stack {
       handler: "index.handler",
       timeout: cdk.Duration.seconds(30),
       code: lambda.Code.fromBucket(assetsBucket, workerAssetKey),
+      environment: {
+        EMULATOR_ENDPOINT: emulatorEndpoint,
+        TABLE_NAME: jobsTableName,
+      },
     });
 
     queue.grantSendMessages(jobsHandler);

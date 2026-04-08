@@ -1,6 +1,6 @@
 # Build output
 dist/
-preflight
+/preflight
 
 # Config (may contain API keys)
 .preflight.yaml
@@ -23,6 +23,7 @@ coverage.html
 
 # macOS
 .DS_Store
+.emulator.log
 
 # Editor
 .idea/

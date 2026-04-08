@@ -8,29 +8,29 @@ import (
 	"path/filepath"
 )
 
-// CDKRunner deploys a CDK stack to Floci by overriding AWS endpoint environment
+// CDKRunner deploys a CDK stack to the configured emulator by overriding AWS endpoint environment
 // variables so that `cdk deploy` targets localhost instead of real AWS.
 type CDKRunner struct {
-	dir           string
-	stackName     string
-	flociEndpoint string
-	cdkApp        string // optional: override the CDK app command
+	dir              string
+	stackName        string
+	emulatorEndpoint string
+	cdkApp           string // optional: override the CDK app command
 }
 
 // NewCDKRunner constructs a CDKRunner.
 // stackName can be empty to deploy all stacks in the app.
-func NewCDKRunner(dir, stackName, flociEndpoint, cdkApp string) *CDKRunner {
+func NewCDKRunner(dir, stackName, emulatorEndpoint, cdkApp string) *CDKRunner {
 	return &CDKRunner{
-		dir:           dir,
-		stackName:     stackName,
-		flociEndpoint: flociEndpoint,
-		cdkApp:        cdkApp,
+		dir:              dir,
+		stackName:        stackName,
+		emulatorEndpoint: emulatorEndpoint,
+		cdkApp:           cdkApp,
 	}
 }
 
 func (r *CDKRunner) StackName() string { return r.stackName }
 
-// Deploy runs `cdk deploy` with Floci endpoint overrides.
+// Deploy runs `cdk deploy` with emulator endpoint overrides.
 // It streams stdout/stderr to the terminal so users see CDK's output.
 func (r *CDKRunner) Deploy(ctx context.Context) error {
 	args := []string{"deploy", "--require-approval", "never"}
@@ -52,7 +52,7 @@ func (r *CDKRunner) Deploy(ctx context.Context) error {
 	cmd.Dir = r.dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), flociEnv(r.flociEndpoint)...)
+	cmd.Env = append(os.Environ(), emulatorEnv(r.emulatorEndpoint)...)
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("cdk deploy failed: %w", err)
@@ -84,9 +84,9 @@ func findCDKWithLookPath(lookPath func(string) (string, error)) (string, []strin
 	return "", nil, fmt.Errorf("cdk not found — install via: npm install -g aws-cdk")
 }
 
-// flociEnv returns the environment variables needed to redirect AWS SDK
-// calls to the Floci endpoint.
-func flociEnv(endpoint string) []string {
+// emulatorEnv returns the environment variables needed to redirect AWS SDK
+// calls to the local emulator endpoint.
+func emulatorEnv(endpoint string) []string {
 	return []string{
 		"AWS_ENDPOINT_URL=" + endpoint,
 		"AWS_ACCESS_KEY_ID=test",
@@ -94,5 +94,6 @@ func flociEnv(endpoint string) []string {
 		"AWS_DEFAULT_REGION=us-east-1",
 		"CDK_DEFAULT_ACCOUNT=000000000000",
 		"CDK_DEFAULT_REGION=us-east-1",
+		"EMULATOR_ENDPOINT=" + endpoint,
 	}
 }

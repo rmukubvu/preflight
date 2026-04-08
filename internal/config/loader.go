@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -41,9 +42,10 @@ func DefaultConfig() Config {
 				Model:   "gemma3",
 			},
 		},
-		Floci: FlociConfig{
-			Image: "hectorvent/floci:latest",
-			Port:  4566,
+		Emulator: EmulatorConfig{
+			Type:    "stratus",
+			Command: "stratus",
+			Port:    4566,
 		},
 	}
 }
@@ -61,12 +63,12 @@ func Load(dir string) (Config, error) {
 		return Config{}, fmt.Errorf("reading config file: %w", err)
 	}
 
-	cfg := DefaultConfig()
+	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parsing config file: %w", err)
 	}
 
-	return cfg, nil
+	return Normalize(cfg), nil
 }
 
 // Save writes cfg to dir/.preflight.yaml atomically.
@@ -76,7 +78,10 @@ func Save(dir string, cfg Config) error {
 	path := filepath.Join(dir, Filename)
 	tmp := path + ".tmp"
 
-	data, err := marshalWithHeader(cfg)
+	normalized := Normalize(cfg)
+	normalized.Floci = FlociConfig{}
+
+	data, err := marshalWithHeader(normalized)
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
@@ -91,6 +96,102 @@ func Save(dir string, cfg Config) error {
 	}
 
 	return nil
+}
+
+// Normalize applies defaults and maps legacy config into the emulator model.
+func Normalize(cfg Config) Config {
+	defaults := DefaultConfig()
+
+	if cfg.Version == 0 {
+		cfg.Version = defaults.Version
+	}
+
+	if cfg.LLM.Provider == "" {
+		cfg.LLM.Provider = defaults.LLM.Provider
+	}
+	if cfg.LLM.Bedrock.Region == "" {
+		cfg.LLM.Bedrock.Region = defaults.LLM.Bedrock.Region
+	}
+	if cfg.LLM.Bedrock.ModelID == "" {
+		cfg.LLM.Bedrock.ModelID = defaults.LLM.Bedrock.ModelID
+	}
+	if cfg.LLM.Claude.Model == "" {
+		cfg.LLM.Claude.Model = defaults.LLM.Claude.Model
+	}
+	if cfg.LLM.OpenAI.Model == "" {
+		cfg.LLM.OpenAI.Model = defaults.LLM.OpenAI.Model
+	}
+	if cfg.LLM.Ollama.BaseURL == "" {
+		cfg.LLM.Ollama.BaseURL = defaults.LLM.Ollama.BaseURL
+	}
+	if cfg.LLM.Ollama.Model == "" {
+		cfg.LLM.Ollama.Model = defaults.LLM.Ollama.Model
+	}
+
+	if !hasExplicitEmulatorConfig(cfg.Emulator) && hasLegacyFlociConfig(cfg.Floci) {
+		cfg.Emulator = EmulatorConfig{
+			Type:    "floci",
+			Image:   cfg.Floci.Image,
+			Port:    cfg.Floci.Port,
+			DataDir: cfg.Floci.DataDir,
+		}
+	}
+
+	if cfg.Emulator.Type == "" {
+		cfg.Emulator.Type = defaults.Emulator.Type
+	}
+	if cfg.Emulator.Port == 0 {
+		cfg.Emulator.Port = defaults.Emulator.Port
+	}
+
+	switch cfg.Emulator.Type {
+	case "stratus":
+		if cfg.Emulator.Command == "" && cfg.Emulator.Endpoint == "" {
+			cfg.Emulator.Command = defaults.Emulator.Command
+		}
+	case "floci":
+		if cfg.Emulator.Image == "" {
+			cfg.Emulator.Image = "hectorvent/floci:latest"
+		}
+	}
+
+	if raw := os.Getenv("PREFLIGHT_EMULATOR_TYPE"); raw != "" {
+		cfg.Emulator.Type = raw
+	}
+	if raw := os.Getenv("PREFLIGHT_EMULATOR_ENDPOINT"); raw != "" {
+		cfg.Emulator.Endpoint = raw
+		cfg.Emulator.Command = ""
+	}
+	if raw := os.Getenv("PREFLIGHT_EMULATOR_COMMAND"); raw != "" {
+		cfg.Emulator.Command = raw
+	}
+	if raw := os.Getenv("PREFLIGHT_EMULATOR_PORT"); raw != "" {
+		if port, err := strconv.Atoi(raw); err == nil && port > 0 {
+			cfg.Emulator.Port = port
+		}
+	}
+	if raw := os.Getenv("PREFLIGHT_EMULATOR_DATA_DIR"); raw != "" {
+		cfg.Emulator.DataDir = raw
+	}
+	if raw := os.Getenv("PREFLIGHT_EMULATOR_HEALTH_PATH"); raw != "" {
+		cfg.Emulator.HealthPath = raw
+	}
+
+	return cfg
+}
+
+func hasExplicitEmulatorConfig(cfg EmulatorConfig) bool {
+	return cfg.Type != "" ||
+		cfg.Endpoint != "" ||
+		cfg.Command != "" ||
+		cfg.Image != "" ||
+		cfg.Port != 0 ||
+		cfg.DataDir != "" ||
+		cfg.HealthPath != ""
+}
+
+func hasLegacyFlociConfig(cfg FlociConfig) bool {
+	return cfg.Image != "" || cfg.Port != 0 || cfg.DataDir != ""
 }
 
 func marshalWithHeader(cfg Config) ([]byte, error) {
