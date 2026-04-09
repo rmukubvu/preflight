@@ -167,6 +167,86 @@ Lint also supports structured external output:
 Both `json` and `markdown` include grouped remediation summaries so the same
 run can feed local use, CI checks, and future external surfaces.
 
+Concrete examples:
+
+### Example: lint
+
+Run a fast readiness pass against a CDK stack:
+
+```bash
+./dist/preflight lint --stack-name SmokeFixtureStack --no-ai
+```
+
+Representative terminal output:
+
+```text
+preflight lint
+
+✓ cdk detected
+✓ synthesized templates /tmp/preflight-synth-123456
+
+ 100 security       0 finding(s)
+  76 reliability    2 finding(s)
+  88 observability  1 finding(s)
+  64 scalability    3 finding(s)
+
+  WATCH reliability    This category is being pulled down by Lambda function does not set an explicit timeout and SQS queue has no dead-letter queue configured.
+        next: Set Timeout explicitly so failure budgets stay intentional as the function evolves.
+  WATCH observability  This category is being pulled down by API stage does not configure access logging.
+        next: Add access log settings so request failures and latency are observable.
+  RISK  scalability    This category is being pulled down by Lambda function does not set an explicit concurrency posture and API stage does not configure throttling or rate-limit settings.
+        next: Set ReservedConcurrentExecutions explicitly or document why unbounded account concurrency is acceptable.
+```
+
+### Example: diagnosis
+
+Each finding includes a deterministic diagnosis and fix, or an AI-assisted one
+if an LLM provider is configured:
+
+```text
+Diagnoses
+◆ lambda-concurrency-explicit via rulebook
+  This leaves scaling behavior implicit, which usually shows up as throttling, backlog growth, or unstable latency. Lambda function does not set an explicit concurrency posture.
+  fix: Set ReservedConcurrentExecutions explicitly or document why unbounded account concurrency is acceptable.
+
+◆ api-throttling via rulebook
+  This leaves scaling behavior implicit, which usually shows up as throttling, backlog growth, or unstable latency. API stage does not configure throttling or rate-limit settings.
+  fix: Set throttling burst and rate limits explicitly so traffic spikes fail predictably instead of exhausting downstream capacity.
+```
+
+### Example: readiness score
+
+If you want a machine-readable readiness score for CI or a future UI:
+
+```bash
+./dist/preflight lint --stack-name SmokeFixtureStack --output json --no-ai
+```
+
+Representative JSON excerpt:
+
+```json
+{
+  "summary": {
+    "scores": [
+      { "category": "security", "score": 100, "errors": 0, "warnings": 0 },
+      { "category": "reliability", "score": 76, "errors": 0, "warnings": 2 },
+      { "category": "observability", "score": 88, "errors": 0, "warnings": 1 },
+      { "category": "scalability", "score": 64, "errors": 0, "warnings": 3 }
+    ],
+    "score_diagnoses": [
+      {
+        "category": "scalability",
+        "score": 64,
+        "status": "watch",
+        "explanation": "This category is being pulled down by Lambda function does not set an explicit concurrency posture and API stage does not configure throttling or rate-limit settings.",
+        "suggested_fix": "Set ReservedConcurrentExecutions explicitly or document why unbounded account concurrency is acceptable.",
+        "top_rule_ids": ["lambda-concurrency-explicit", "api-throttling"]
+      }
+    ]
+  }
+}
+```
+
 If you want those artifacts from the normal deploy path, use:
 
 ```bash
@@ -201,6 +281,30 @@ Examples:
 
 `--runner auto` is the default. It uses `k6` when the binary is available, and
 falls back to the native runner otherwise.
+
+### Example: load
+
+Run the generated load scenario against the current behavioural HTTP checks:
+
+```bash
+./dist/preflight load --stack-name SmokeFixtureStack --runner k6 --vus 8 --iterations 40
+```
+
+Representative output:
+
+```text
+preflight load
+
+✓ cdk detected
+
+✓ total=40 failures=0 avg=32ms p95=71ms
+
+✓ apigw-http:POST api-123/jobs
+  metrics: total=40 failures=0 avg=32ms p95=71ms
+```
+
+If `k6` is not installed, `--runner auto` falls back to the native concurrent
+runner and preserves the same summary shape.
 
 ## Two Runtime Modes
 
