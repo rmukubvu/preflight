@@ -146,10 +146,11 @@ func Run(ctx context.Context, w io.Writer, opts Options) (Result, error) {
 		diagnoses = diagnoseFindings(ctx, opts.LLM, result)
 	}
 
-	if err := renderOutput(ctx, w, opts, result, diagnoses); err != nil {
+	report := NewReport(result, diagnoses, opts)
+	if err := renderOutput(ctx, w, opts, result, diagnoses, report); err != nil {
 		return Result{}, err
 	}
-	if err := writeArtifacts(NewReport(result, diagnoses, opts), opts.ReportJSONFile, opts.ReportMarkdownFile); err != nil {
+	if err := writeArtifacts(report, opts.ReportJSONFile, opts.ReportMarkdownFile); err != nil {
 		return Result{}, err
 	}
 
@@ -198,27 +199,27 @@ func runTerraform(w io.Writer, opts Options) (Result, error) {
 	return result, nil
 }
 
-func renderOutput(ctx context.Context, w io.Writer, opts Options, result Result, diagnoses []DiagnosedFinding) error {
+func renderOutput(ctx context.Context, w io.Writer, opts Options, result Result, diagnoses []DiagnosedFinding, report Report) error {
 	switch opts.Output {
 	case outputText:
-		printSummary(w, result)
+		printSummary(w, report)
 		printFindings(w, result)
 		printDiagnoses(w, diagnoses)
 		return nil
 	case outputJSON:
-		return WriteJSON(w, NewReport(result, diagnoses, opts))
+		return WriteJSON(w, report)
 	case outputMarkdown:
-		return WriteMarkdown(w, NewReport(result, diagnoses, opts))
+		return WriteMarkdown(w, report)
 	default:
 		return fmt.Errorf("unsupported lint output format %q", opts.Output)
 	}
 }
 
-func printSummary(w io.Writer, result Result) {
-	counts := result.CountsByCategory()
-	if len(result.Findings) == 0 {
+func printSummary(w io.Writer, report Report) {
+	counts := report.Summary.ByCategory
+	if len(report.Findings) == 0 {
 		fmt.Fprintf(w, "  %s no readiness findings detected in the synthesized templates\n", stylePass.Render("✓"))
-		for _, score := range result.Scores() {
+		for _, score := range report.Summary.Scores {
 			fmt.Fprintf(w, "  %s %-14s %s\n",
 				stylePass.Render("100"),
 				styleHeader.Render(string(score.Category)),
@@ -230,7 +231,7 @@ func printSummary(w io.Writer, result Result) {
 	}
 
 	fmt.Fprintln(w)
-	for _, score := range result.Scores() {
+	for _, score := range report.Summary.Scores {
 		scoreText := stylePass.Render(fmt.Sprintf("%3d", score.Score))
 		if score.Errors > 0 {
 			scoreText = styleFail.Render(fmt.Sprintf("%3d", score.Score))
@@ -242,6 +243,26 @@ func printSummary(w io.Writer, result Result) {
 			styleHeader.Render(string(score.Category)),
 			styleMuted.Render(fmt.Sprintf("%d finding(s)", counts[score.Category])),
 		)
+	}
+	fmt.Fprintln(w)
+	if len(report.Summary.ScoreDiagnoses) == 0 {
+		return
+	}
+	for _, diagnosis := range report.Summary.ScoreDiagnoses {
+		label := stylePass.Render("OK")
+		if diagnosis.Status == "at-risk" {
+			label = styleFail.Render("RISK")
+		} else if diagnosis.Status == "watch" {
+			label = styleWarning.Render("WATCH")
+		}
+		fmt.Fprintf(w, "  %s %-14s %s\n",
+			label,
+			styleHeader.Render(string(diagnosis.Category)),
+			diagnosis.Explanation,
+		)
+		if strings.TrimSpace(diagnosis.SuggestedFix) != "" {
+			fmt.Fprintf(w, "        %s %s\n", styleMuted.Render("next:"), diagnosis.SuggestedFix)
+		}
 	}
 	fmt.Fprintln(w)
 }

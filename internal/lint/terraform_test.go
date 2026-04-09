@@ -38,6 +38,12 @@ resource "aws_apigatewayv2_route" "jobs" {
   route_key = "POST /jobs"
 }
 
+resource "aws_apigatewayv2_stage" "jobs" {
+  api_id      = aws_apigatewayv2_api.jobs.id
+  name        = "$default"
+  auto_deploy = true
+}
+
 resource "aws_sfn_state_machine" "workflow" {
   name       = "workflow"
   role_arn   = "arn:aws:iam::123456789012:role/demo"
@@ -61,11 +67,15 @@ resource "aws_iam_role_policy" "wildcard" {
 	assertHasRule(t, result, "s3-encryption")
 	assertHasRule(t, result, "s3-public-access-block")
 	assertHasRule(t, result, "sqs-redrive-policy")
+	assertHasRule(t, result, "sqs-encryption")
 	assertHasRule(t, result, "dynamodb-pitr")
+	assertHasRule(t, result, "dynamodb-encryption")
 	assertHasRule(t, result, "dynamodb-autoscaling")
 	assertHasRule(t, result, "lambda-timeout-explicit")
+	assertHasRule(t, result, "lambda-concurrency-explicit")
 	assertHasRule(t, result, "lambda-log-retention")
 	assertHasRule(t, result, "api-auth")
+	assertHasRule(t, result, "api-throttling")
 	assertHasRule(t, result, "sfn-logging")
 	assertHasRule(t, result, "sfn-timeouts")
 	assertHasRule(t, result, "iam-wildcard-action")

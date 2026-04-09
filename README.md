@@ -46,7 +46,7 @@ What is true today:
 
 - the root CLI exists at `cmd/preflight/main.go`
 - `preflight lint` runs a fast static readiness pass for CDK and Terraform stacks
-- `preflight load` replays HTTP behavioural checks under concurrent local load
+- `preflight load` can generate and run k6-backed HTTP load scenarios from behavioural assertions
 - `preflight deploy` runs static lint first, then deploys into the configured emulator
 - the direct CLI deploy path can target `stratus`, `floci`, or a custom endpoint
 - the smoke harness can run against `stratus` or `floci`
@@ -134,16 +134,21 @@ It checks for common readiness gaps such as:
 
 - wildcard IAM permissions
 - S3 public access and encryption gaps
-- SQS queues without DLQs
-- DynamoDB tables without PITR or autoscaling posture
-- Lambda functions without explicit log retention
-- API stages without access logging
+- SQS queues without DLQs or explicit encryption posture
+- DynamoDB tables without PITR, encryption, or autoscaling posture
+- Lambda functions without explicit timeout, concurrency, or log retention
+- API stages without access logging or throttling posture
 - API routes without explicit auth posture
 - Step Functions without logging, tracing, or timeout posture
 - EventBridge, SNS, and stream consumers without delivery durability controls
 - stacks with workload resources but no CloudWatch alarms
 
-When lint finds issues, `preflight` now prints a diagnosis for each finding.
+When lint finds issues, `preflight` now prints:
+
+- a diagnosis for each finding
+- category readiness scores
+- a score-level explanation of what is pulling each category down
+
 With no AI provider configured, it falls back to a deterministic rulebook
 explanation and fix.
 
@@ -179,9 +184,23 @@ That gives you:
 - an assertion JSON artifact for the deploy-time validation result
 
 `preflight load` uses the existing behavioural HTTP assertions as a local load
-scenario. It can deploy the stack first, then replay those HTTP paths with
-configurable concurrency and iteration counts to surface latency and failure
-signals before AWS deployment.
+scenario. It can deploy the stack first, then:
+
+- run a native concurrent replay
+- or generate and execute a `k6` scenario from those assertions
+
+That surfaces latency and failure signals before AWS deployment.
+
+Examples:
+
+```bash
+./dist/preflight load --stack-name MyStack
+./dist/preflight load --stack-name MyStack --runner native
+./dist/preflight load --stack-name MyStack --runner k6
+```
+
+`--runner auto` is the default. It uses `k6` when the binary is available, and
+falls back to the native runner otherwise.
 
 ## Two Runtime Modes
 

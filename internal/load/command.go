@@ -37,6 +37,7 @@ func NewCommand() *cobra.Command {
 		vus        int
 		iterations int
 		skipDeploy bool
+		runner     string
 	)
 
 	cmd := &cobra.Command{
@@ -83,6 +84,7 @@ and failure hotspots before AWS deployment.`,
 				VUs:        vus,
 				Iterations: iterations,
 				SkipDeploy: skipDeploy,
+				Runner:     runner,
 			})
 		},
 	}
@@ -93,6 +95,7 @@ and failure hotspots before AWS deployment.`,
 	cmd.Flags().IntVar(&vus, "vus", 4, "Concurrent virtual users")
 	cmd.Flags().IntVar(&iterations, "iterations", 20, "Total requests per HTTP behavioural assertion")
 	cmd.Flags().BoolVar(&skipDeploy, "skip-deploy", false, "Skip deploy and use the current emulator state")
+	cmd.Flags().StringVar(&runner, "runner", "auto", "Load runner: auto, native, or k6")
 
 	return cmd
 }
@@ -106,6 +109,7 @@ type Options struct {
 	VUs        int
 	Iterations int
 	SkipDeploy bool
+	Runner     string
 }
 
 // Result captures aggregate load output.
@@ -163,11 +167,15 @@ func Run(ctx context.Context, w io.Writer, opts Options) error {
 	if err != nil {
 		return err
 	}
+	scenarios, err := buildHTTPScenarios(ctx, client, opts)
+	if err != nil {
+		return err
+	}
 	if len(checks) == 0 {
 		return fmt.Errorf("no behavioural HTTP assertions configured; add assertions.behavioural.http before using preflight load")
 	}
 
-	result, err := runChecks(ctx, client, checks, opts.VUs, opts.Iterations)
+	result, err := runHTTPLoad(ctx, client, checks, scenarios, opts)
 	if err != nil {
 		return err
 	}
@@ -176,6 +184,45 @@ func Run(ctx context.Context, w io.Writer, opts Options) error {
 		return fmt.Errorf("load run detected %d failed request(s)", result.Failures)
 	}
 	return nil
+}
+
+const (
+	runnerAuto   = "auto"
+	runnerNative = "native"
+	runnerK6     = "k6"
+)
+
+type httpScenario struct {
+	Name           string
+	Method         string
+	URL            string
+	ExpectedStatus int
+	Body           string
+	Headers        map[string]string
+}
+
+func runHTTPLoad(ctx context.Context, client awsclient.Client, checks []*assertions.APIGatewayHTTPCheck, scenarios []httpScenario, opts Options) (Result, error) {
+	switch normalizeRunner(opts.Runner) {
+	case runnerNative:
+		return runChecks(ctx, client, checks, opts.VUs, opts.Iterations)
+	case runnerK6:
+		return runK6(ctx, scenarios, opts.VUs, opts.Iterations)
+	case runnerAuto:
+		if hasK6Binary() {
+			return runK6(ctx, scenarios, opts.VUs, opts.Iterations)
+		}
+		return runChecks(ctx, client, checks, opts.VUs, opts.Iterations)
+	default:
+		return Result{}, fmt.Errorf("unsupported load runner %q", opts.Runner)
+	}
+}
+
+func normalizeRunner(runner string) string {
+	runner = strings.ToLower(strings.TrimSpace(runner))
+	if runner == "" {
+		return runnerAuto
+	}
+	return runner
 }
 
 func printResults(w io.Writer, result Result) {
@@ -281,6 +328,64 @@ func buildHTTPChecks(ctx context.Context, client awsclient.Client, opts Options)
 		checks = append(checks, check)
 	}
 	return checks, nil
+}
+
+func buildHTTPScenarios(ctx context.Context, client awsclient.Client, opts Options) ([]httpScenario, error) {
+	var resources []awsclient.StackResource
+	var apis []awsclient.APIDetail
+	if opts.StackName != "" {
+		var err error
+		resources, err = client.CloudFormationStackResources(ctx, opts.StackName)
+		if err != nil {
+			return nil, fmt.Errorf("discovering stack resources for %q: %w", opts.StackName, err)
+		}
+	}
+	if len(opts.Config.Assertions.Behavioural.HTTP) > 0 {
+		var err error
+		apis, err = client.APIGatewayV2APIs(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing api gateway apis: %w", err)
+		}
+	}
+
+	scenarios := make([]httpScenario, 0, len(opts.Config.Assertions.Behavioural.HTTP))
+	for _, cfg := range opts.Config.Assertions.Behavioural.HTTP {
+		apiID := resolveAPIRef(resources, apis, cfg.API)
+		baseURL, err := client.APIGatewayV2InvokeURL(ctx, apiID)
+		if err != nil {
+			return nil, fmt.Errorf("getting invoke URL for API %q: %w", apiID, err)
+		}
+		scenarios = append(scenarios, httpScenario{
+			Name:           fmt.Sprintf("apigw-http:%s %s%s", strings.ToUpper(strings.TrimSpace(cfg.Method)), apiID, normalizePath(cfg.Path)),
+			Method:         strings.ToUpper(strings.TrimSpace(cfg.Method)),
+			URL:            strings.TrimRight(baseURL, "/") + normalizePath(cfg.Path),
+			ExpectedStatus: cfg.ExpectedStatus,
+			Body:           cfg.Body,
+			Headers:        cloneHeaders(cfg.Headers),
+		})
+	}
+	return scenarios, nil
+}
+
+func normalizePath(path string) string {
+	if path == "" || path == "/" {
+		return "/"
+	}
+	if strings.HasPrefix(path, "/") {
+		return path
+	}
+	return "/" + path
+}
+
+func cloneHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(headers))
+	for key, value := range headers {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func runChecks(ctx context.Context, client awsclient.Client, checks []*assertions.APIGatewayHTTPCheck, vus, iterations int) (Result, error) {

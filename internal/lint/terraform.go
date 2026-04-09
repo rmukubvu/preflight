@@ -187,22 +187,45 @@ func terraformS3Rules(resources []terraformResource, resource terraformResource)
 }
 
 func terraformSQSRules(resource terraformResource) []Finding {
-	if hasTerraformAttribute(resource, "redrive_policy") {
-		return nil
+	var findings []Finding
+	if !hasTerraformAttribute(resource, "redrive_policy") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryReliability,
+			RuleID:         "sqs-redrive-policy",
+			TemplateName:   resource.Filename,
+			ResourceID:     resource.Name,
+			Message:        "SQS queue has no dead-letter queue configured.",
+			Recommendation: "Set redrive_policy so poison messages do not block consumers indefinitely.",
+		})
 	}
-	return []Finding{{
-		Severity:       SeverityWarning,
-		Category:       CategoryReliability,
-		RuleID:         "sqs-redrive-policy",
-		TemplateName:   resource.Filename,
-		ResourceID:     resource.Name,
-		Message:        "SQS queue has no dead-letter queue configured.",
-		Recommendation: "Set redrive_policy so poison messages do not block consumers indefinitely.",
-	}}
+	if !hasTerraformAttribute(resource, "kms_master_key_id") && !terraformAttrBool(resource, "sqs_managed_sse_enabled") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategorySecurity,
+			RuleID:         "sqs-encryption",
+			TemplateName:   resource.Filename,
+			ResourceID:     resource.Name,
+			Message:        "SQS queue does not configure server-side encryption explicitly.",
+			Recommendation: "Set kms_master_key_id or sqs_managed_sse_enabled so queued data is encrypted at rest.",
+		})
+	}
+	return findings
 }
 
 func terraformDynamoRules(resources []terraformResource, resource terraformResource) []Finding {
 	var findings []Finding
+	if !terraformBlockAttrBool(resource, "server_side_encryption", "enabled") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategorySecurity,
+			RuleID:         "dynamodb-encryption",
+			TemplateName:   resource.Filename,
+			ResourceID:     resource.Name,
+			Message:        "DynamoDB table does not configure server-side encryption explicitly.",
+			Recommendation: "Add a server_side_encryption block with enabled = true.",
+		})
+	}
 	if !hasTerraformBlock(resource, "point_in_time_recovery") {
 		findings = append(findings, Finding{
 			Severity:       SeverityWarning,
@@ -244,6 +267,17 @@ func terraformLambdaRules(resources []terraformResource, resource terraformResou
 			Recommendation: "Set timeout explicitly so failure budgets stay intentional as the function evolves.",
 		})
 	}
+	if !hasTerraformAttribute(resource, "reserved_concurrent_executions") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryScalability,
+			RuleID:         "lambda-concurrency-explicit",
+			TemplateName:   resource.Filename,
+			ResourceID:     resource.Name,
+			Message:        "Lambda function does not set an explicit concurrency posture.",
+			Recommendation: "Set reserved_concurrent_executions explicitly or document why unbounded account concurrency is acceptable.",
+		})
+	}
 	if !hasLambdaLogGroup(resources, resource.Name) {
 		findings = append(findings, Finding{
 			Severity:       SeverityWarning,
@@ -259,18 +293,30 @@ func terraformLambdaRules(resources []terraformResource, resource terraformResou
 }
 
 func terraformAPILoggingRules(resource terraformResource) []Finding {
-	if hasTerraformBlock(resource, "access_log_settings") || hasTerraformAttribute(resource, "access_log_settings") {
-		return nil
+	var findings []Finding
+	if !hasTerraformBlock(resource, "access_log_settings") && !hasTerraformAttribute(resource, "access_log_settings") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryObservability,
+			RuleID:         "api-access-logs",
+			TemplateName:   resource.Filename,
+			ResourceID:     resource.Name,
+			Message:        "API stage does not configure access logging.",
+			Recommendation: "Add access_log_settings so request failures and latency are observable.",
+		})
 	}
-	return []Finding{{
-		Severity:       SeverityWarning,
-		Category:       CategoryObservability,
-		RuleID:         "api-access-logs",
-		TemplateName:   resource.Filename,
-		ResourceID:     resource.Name,
-		Message:        "API stage does not configure access logging.",
-		Recommendation: "Add access_log_settings so request failures and latency are observable.",
-	}}
+	if !hasTerraformAPIThrottleSettings(resource) {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryScalability,
+			RuleID:         "api-throttling",
+			TemplateName:   resource.Filename,
+			ResourceID:     resource.Name,
+			Message:        "API stage does not configure throttling or rate-limit settings.",
+			Recommendation: "Add stage throttling settings so traffic spikes fail predictably instead of exhausting downstream capacity.",
+		})
+	}
+	return findings
 }
 
 func terraformStepFunctionsRules(resource terraformResource) []Finding {
@@ -507,4 +553,70 @@ func terraformAttrSource(resource terraformResource, name string) string {
 		return ""
 	}
 	return string(resource.Source[rng.Start.Byte:rng.End.Byte])
+}
+
+func terraformAttrBool(resource terraformResource, name string) bool {
+	value := strings.TrimSpace(strings.ToLower(terraformAttrSource(resource, name)))
+	return value == "true"
+}
+
+func terraformBlockAttrBool(resource terraformResource, blockType, attrName string) bool {
+	for _, block := range resource.Body.Blocks {
+		if block.Type != blockType {
+			continue
+		}
+		attr, ok := block.Body.Attributes[attrName]
+		if !ok {
+			continue
+		}
+		rng := attr.Expr.Range()
+		if int(rng.Start.Byte) >= len(resource.Source) || int(rng.End.Byte) > len(resource.Source) {
+			continue
+		}
+		value := strings.TrimSpace(strings.ToLower(string(resource.Source[rng.Start.Byte:rng.End.Byte])))
+		if value == "true" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTerraformAPIThrottleSettings(resource terraformResource) bool {
+	switch resource.Type {
+	case "aws_apigatewayv2_stage":
+		for _, block := range resource.Body.Blocks {
+			if block.Type != "default_route_settings" {
+				continue
+			}
+			hasBurst := false
+			hasRate := false
+			if attr, ok := block.Body.Attributes["throttling_burst_limit"]; ok {
+				hasBurst = attr.Expr != nil
+			}
+			if attr, ok := block.Body.Attributes["throttling_rate_limit"]; ok {
+				hasRate = attr.Expr != nil
+			}
+			if hasBurst && hasRate {
+				return true
+			}
+		}
+	case "aws_api_gateway_stage":
+		for _, block := range resource.Body.Blocks {
+			if block.Type != "method_settings" {
+				continue
+			}
+			hasBurst := false
+			hasRate := false
+			if attr, ok := block.Body.Attributes["throttling_burst_limit"]; ok {
+				hasBurst = attr.Expr != nil
+			}
+			if attr, ok := block.Body.Attributes["throttling_rate_limit"]; ok {
+				hasRate = attr.Expr != nil
+			}
+			if hasBurst && hasRate {
+				return true
+			}
+		}
+	}
+	return false
 }

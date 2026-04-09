@@ -28,11 +28,12 @@ type Report struct {
 }
 
 type ReportSummary struct {
-	TotalFindings int              `json:"total_findings"`
-	ErrorCount    int              `json:"error_count"`
-	WarningCount  int              `json:"warning_count"`
-	ByCategory    map[Category]int `json:"by_category"`
-	Scores        []CategoryScore  `json:"scores"`
+	TotalFindings  int                    `json:"total_findings"`
+	ErrorCount     int                    `json:"error_count"`
+	WarningCount   int                    `json:"warning_count"`
+	ByCategory     map[Category]int       `json:"by_category"`
+	Scores         []CategoryScore        `json:"scores"`
+	ScoreDiagnoses []ScoreDiagnosisReport `json:"score_diagnoses,omitempty"`
 }
 
 type ReportFinding struct {
@@ -62,6 +63,15 @@ type RemediationSummary struct {
 	WhyItMatters      string   `json:"why_it_matters"`
 	SuggestedFix      string   `json:"suggested_fix"`
 	AffectedResources []string `json:"affected_resources"`
+}
+
+type ScoreDiagnosisReport struct {
+	Category     Category `json:"category"`
+	Score        int      `json:"score"`
+	Status       string   `json:"status"`
+	Explanation  string   `json:"explanation"`
+	SuggestedFix string   `json:"suggested_fix,omitempty"`
+	TopRuleIDs   []string `json:"top_rule_ids,omitempty"`
 }
 
 func NewReport(result Result, diagnoses []DiagnosedFinding, opts Options) Report {
@@ -112,6 +122,7 @@ func NewReport(result Result, diagnoses []DiagnosedFinding, opts Options) Report
 		})
 	}
 	report.Remediations = remediationSummaries(report.Findings)
+	report.Summary.ScoreDiagnoses = scoreDiagnoses(report.Summary.Scores, report.Remediations)
 	return report
 }
 
@@ -140,6 +151,22 @@ func WriteMarkdown(w io.Writer, report Report) error {
 		fmt.Fprintf(w, "| %s | %d | %d | %d |\n", score.Category, score.Score, score.Errors, score.Warnings)
 	}
 	fmt.Fprintln(w)
+
+	if len(report.Summary.ScoreDiagnoses) > 0 {
+		fmt.Fprintln(w, "### Score diagnoses")
+		fmt.Fprintln(w)
+		for _, diagnosis := range report.Summary.ScoreDiagnoses {
+			fmt.Fprintf(w, "- **[%s] %s (%d)**\n", diagnosis.Status, diagnosis.Category, diagnosis.Score)
+			fmt.Fprintf(w, "  - Why this score is low: %s\n", diagnosis.Explanation)
+			if strings.TrimSpace(diagnosis.SuggestedFix) != "" {
+				fmt.Fprintf(w, "  - Next fix: %s\n", diagnosis.SuggestedFix)
+			}
+			if len(diagnosis.TopRuleIDs) > 0 {
+				fmt.Fprintf(w, "  - Top drivers: `%s`\n", strings.Join(diagnosis.TopRuleIDs, "`, `"))
+			}
+		}
+		fmt.Fprintln(w)
+	}
 
 	if len(report.Remediations) > 0 {
 		fmt.Fprintln(w, "### Recommended next actions")
@@ -273,6 +300,72 @@ func remediationSummaries(findings []ReportFinding) []RemediationSummary {
 		})
 	}
 	return out
+}
+
+func scoreDiagnoses(scores []CategoryScore, remediations []RemediationSummary) []ScoreDiagnosisReport {
+	grouped := make(map[Category][]RemediationSummary)
+	for _, remediation := range remediations {
+		grouped[remediation.Category] = append(grouped[remediation.Category], remediation)
+	}
+
+	out := make([]ScoreDiagnosisReport, 0, len(scores))
+	for _, score := range scores {
+		drivers := grouped[score.Category]
+		status := "strong"
+		switch {
+		case score.Score < 60 || score.Errors > 0:
+			status = "at-risk"
+		case score.Score < 85 || score.Warnings > 0:
+			status = "watch"
+		}
+
+		explanation := "No findings in the current rule pack are pulling this category down."
+		suggestedFix := ""
+		topRuleIDs := make([]string, 0, min(3, len(drivers)))
+		if len(drivers) > 0 {
+			titles := make([]string, 0, min(2, len(drivers)))
+			for i, remediation := range drivers {
+				if i < 3 {
+					topRuleIDs = append(topRuleIDs, remediation.RuleID)
+				}
+				if i < 2 {
+					titles = append(titles, remediation.Title)
+				}
+			}
+			explanation = fmt.Sprintf("This category is being pulled down by %s.", joinWithAnd(titles))
+			suggestedFix = drivers[0].SuggestedFix
+		}
+
+		out = append(out, ScoreDiagnosisReport{
+			Category:     score.Category,
+			Score:        score.Score,
+			Status:       status,
+			Explanation:  explanation,
+			SuggestedFix: suggestedFix,
+			TopRuleIDs:   topRuleIDs,
+		})
+	}
+	return out
+}
+
+func joinWithAnd(parts []string) string {
+	switch len(parts) {
+	case 0:
+		return ""
+	case 1:
+		return parts[0]
+	case 2:
+		return parts[0] + " and " + parts[1]
+	default:
+		return strings.Join(parts[:len(parts)-1], ", ") + ", and " + parts[len(parts)-1]
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func reportFindingKey(f Finding) string {

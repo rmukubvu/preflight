@@ -214,13 +214,13 @@ func evaluateTemplate(template TemplateFile) []Finding {
 		case "AWS::S3::Bucket":
 			findings = append(findings, s3ProtectionRules(template.Name, logicalID, resource)...)
 		case "AWS::SQS::Queue":
-			findings = append(findings, sqsReliabilityRules(template.Name, logicalID, resource)...)
+			findings = append(findings, sqsRules(template.Name, logicalID, resource)...)
 		case "AWS::DynamoDB::Table":
-			findings = append(findings, dynamoReliabilityRules(template, logicalID, resource)...)
+			findings = append(findings, dynamoRules(template, logicalID, resource)...)
 		case "AWS::Lambda::Function":
-			findings = append(findings, lambdaObservabilityRules(template, logicalID, resource)...)
+			findings = append(findings, lambdaRules(template, logicalID, resource)...)
 		case "AWS::ApiGatewayV2::Stage", "AWS::ApiGateway::Stage":
-			findings = append(findings, apiLoggingRules(template.Name, logicalID, resource)...)
+			findings = append(findings, apiStageRules(template.Name, logicalID, resource)...)
 		case "AWS::ApiGatewayV2::Route", "AWS::ApiGateway::Method":
 			findings = append(findings, apiAuthRules(template.Name, logicalID, resource)...)
 		case "AWS::StepFunctions::StateMachine":
@@ -315,23 +315,47 @@ func s3ProtectionRules(templateName, logicalID string, resource Resource) []Find
 	return findings
 }
 
-func sqsReliabilityRules(templateName, logicalID string, resource Resource) []Finding {
-	if len(nestedMap(resource.Properties, "RedrivePolicy")) != 0 {
-		return nil
+func sqsRules(templateName, logicalID string, resource Resource) []Finding {
+	var findings []Finding
+	if len(nestedMap(resource.Properties, "RedrivePolicy")) == 0 {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryReliability,
+			RuleID:         "sqs-redrive-policy",
+			TemplateName:   templateName,
+			ResourceID:     logicalID,
+			Message:        "SQS queue has no dead-letter queue configured.",
+			Recommendation: "Add RedrivePolicy so poison messages do not block consumers indefinitely.",
+		})
 	}
-	return []Finding{{
-		Severity:       SeverityWarning,
-		Category:       CategoryReliability,
-		RuleID:         "sqs-redrive-policy",
-		TemplateName:   templateName,
-		ResourceID:     logicalID,
-		Message:        "SQS queue has no dead-letter queue configured.",
-		Recommendation: "Add RedrivePolicy so poison messages do not block consumers indefinitely.",
-	}}
+	if _, ok := resource.Properties["KmsMasterKeyId"]; !ok && !boolAt(resource.Properties, "SqsManagedSseEnabled") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategorySecurity,
+			RuleID:         "sqs-encryption",
+			TemplateName:   templateName,
+			ResourceID:     logicalID,
+			Message:        "SQS queue does not configure server-side encryption explicitly.",
+			Recommendation: "Set KmsMasterKeyId or SqsManagedSseEnabled so queued data is encrypted at rest.",
+		})
+	}
+	return findings
 }
 
-func dynamoReliabilityRules(template TemplateFile, logicalID string, resource Resource) []Finding {
+func dynamoRules(template TemplateFile, logicalID string, resource Resource) []Finding {
 	var findings []Finding
+	sse := nestedMap(resource.Properties, "SSESpecification")
+	if !boolAt(sse, "SSEEnabled") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategorySecurity,
+			RuleID:         "dynamodb-encryption",
+			TemplateName:   template.Name,
+			ResourceID:     logicalID,
+			Message:        "DynamoDB table does not configure server-side encryption explicitly.",
+			Recommendation: "Set SSESpecification.SSEEnabled so table encryption posture stays explicit in code review.",
+		})
+	}
 	pitr := nestedMap(resource.Properties, "PointInTimeRecoverySpecification")
 	if !boolAt(pitr, "PointInTimeRecoveryEnabled") {
 		findings = append(findings, Finding{
@@ -364,9 +388,8 @@ func dynamoReliabilityRules(template TemplateFile, logicalID string, resource Re
 	return findings
 }
 
-func lambdaObservabilityRules(template TemplateFile, logicalID string, _ Resource) []Finding {
+func lambdaRules(template TemplateFile, logicalID string, resource Resource) []Finding {
 	var findings []Finding
-	resource := template.Template.Resources[logicalID]
 	if _, ok := resource.Properties["Timeout"]; !ok {
 		findings = append(findings, Finding{
 			Severity:       SeverityWarning,
@@ -376,6 +399,17 @@ func lambdaObservabilityRules(template TemplateFile, logicalID string, _ Resourc
 			ResourceID:     logicalID,
 			Message:        "Lambda function does not set an explicit timeout.",
 			Recommendation: "Set Timeout explicitly so failure budgets stay intentional as the function evolves.",
+		})
+	}
+	if _, ok := resource.Properties["ReservedConcurrentExecutions"]; !ok {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryScalability,
+			RuleID:         "lambda-concurrency-explicit",
+			TemplateName:   template.Name,
+			ResourceID:     logicalID,
+			Message:        "Lambda function does not set an explicit concurrency posture.",
+			Recommendation: "Set ReservedConcurrentExecutions explicitly or document why unbounded account concurrency is acceptable.",
 		})
 	}
 
@@ -413,24 +447,37 @@ func lambdaObservabilityRules(template TemplateFile, logicalID string, _ Resourc
 	return findings
 }
 
-func apiLoggingRules(templateName, logicalID string, resource Resource) []Finding {
+func apiStageRules(templateName, logicalID string, resource Resource) []Finding {
+	var findings []Finding
 	key := "AccessLogSettings"
 	if resource.Type == "AWS::ApiGateway::Stage" {
 		key = "AccessLogSetting"
 	}
-	if len(nestedMap(resource.Properties, key)) != 0 {
-		return nil
+	if len(nestedMap(resource.Properties, key)) == 0 {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryObservability,
+			RuleID:         "api-access-logs",
+			TemplateName:   templateName,
+			ResourceID:     logicalID,
+			Message:        "API stage does not configure access logging.",
+			Recommendation: "Add access log settings so request failures and latency are observable without reproducing them locally.",
+		})
 	}
 
-	return []Finding{{
-		Severity:       SeverityWarning,
-		Category:       CategoryObservability,
-		RuleID:         "api-access-logs",
-		TemplateName:   templateName,
-		ResourceID:     logicalID,
-		Message:        "API stage does not configure access logging.",
-		Recommendation: "Add access log settings so request failures and latency are observable without reproducing them locally.",
-	}}
+	if !hasAPIThrottleSettings(resource) {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryScalability,
+			RuleID:         "api-throttling",
+			TemplateName:   templateName,
+			ResourceID:     logicalID,
+			Message:        "API stage does not configure throttling or rate-limit settings.",
+			Recommendation: "Set throttling burst and rate limits explicitly so traffic spikes fail predictably instead of exhausting downstream capacity.",
+		})
+	}
+
+	return findings
 }
 
 func iamRoleRules(templateName, logicalID string, resource Resource) []Finding {
@@ -758,6 +805,22 @@ func flattenStringLike(value interface{}) string {
 
 func nestedMap(src map[string]interface{}, key string) map[string]interface{} {
 	return asMap(src[key])
+}
+
+func hasAPIThrottleSettings(resource Resource) bool {
+	switch resource.Type {
+	case "AWS::ApiGatewayV2::Stage":
+		settings := nestedMap(resource.Properties, "DefaultRouteSettings")
+		return numberAt(settings, "ThrottlingBurstLimit") > 0 && numberAt(settings, "ThrottlingRateLimit") > 0
+	case "AWS::ApiGateway::Stage":
+		for _, value := range arrayAt(resource.Properties, "MethodSettings") {
+			method := asMap(value)
+			if numberAt(method, "ThrottlingBurstLimit") > 0 && numberAt(method, "ThrottlingRateLimit") > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func asMap(v interface{}) map[string]interface{} {

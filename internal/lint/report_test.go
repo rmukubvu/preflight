@@ -47,6 +47,9 @@ func TestNewReportIncludesDiagnosesAndRemediations(t *testing.T) {
 	if report.Remediations[0].RuleID != "api-auth" {
 		t.Fatalf("expected remediation for api-auth, got %q", report.Remediations[0].RuleID)
 	}
+	if len(report.Summary.ScoreDiagnoses) == 0 {
+		t.Fatalf("expected score diagnoses to be populated")
+	}
 }
 
 func TestWriteJSONProducesMachineReadableFindings(t *testing.T) {
@@ -123,6 +126,16 @@ func TestWriteMarkdownIncludesRecommendedActions(t *testing.T) {
 			Scores: []CategoryScore{
 				{Category: CategoryObservability, Score: 88, Warnings: 1},
 			},
+			ScoreDiagnoses: []ScoreDiagnosisReport{
+				{
+					Category:     CategoryObservability,
+					Score:        88,
+					Status:       "watch",
+					Explanation:  "This category is being pulled down by Lambda function does not configure explicit log retention.",
+					SuggestedFix: "Add aws_cloudwatch_log_group with retention_in_days.",
+					TopRuleIDs:   []string{"lambda-log-retention"},
+				},
+			},
 		},
 	}
 
@@ -133,6 +146,9 @@ func TestWriteMarkdownIncludesRecommendedActions(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "### Recommended next actions") {
 		t.Fatalf("expected markdown output to contain recommended actions section, got %q", output)
+	}
+	if !strings.Contains(output, "### Score diagnoses") {
+		t.Fatalf("expected markdown output to contain score diagnoses section, got %q", output)
 	}
 	if !strings.Contains(output, "lambda-log-retention") {
 		t.Fatalf("expected markdown output to mention remediation rule id, got %q", output)

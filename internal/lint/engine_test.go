@@ -74,10 +74,14 @@ func TestEvaluateTemplatesFindsReadinessGaps(t *testing.T) {
 	assertHasRule(t, result, "s3-encryption")
 	assertHasRule(t, result, "s3-public-access-block")
 	assertHasRule(t, result, "sqs-redrive-policy")
+	assertHasRule(t, result, "sqs-encryption")
 	assertHasRule(t, result, "dynamodb-pitr")
+	assertHasRule(t, result, "dynamodb-encryption")
 	assertHasRule(t, result, "dynamodb-autoscaling")
+	assertHasRule(t, result, "lambda-concurrency-explicit")
 	assertHasRule(t, result, "lambda-log-retention")
 	assertHasRule(t, result, "api-access-logs")
+	assertHasRule(t, result, "api-throttling")
 	assertHasRule(t, result, "iam-wildcard-action")
 	assertHasRule(t, result, "iam-wildcard-resource")
 	assertHasRule(t, result, "alarm-coverage")
@@ -111,13 +115,17 @@ func TestEvaluateTemplatesPassesHealthyTemplate(t *testing.T) {
 				"Queue": {
 					Type: "AWS::SQS::Queue",
 					Properties: map[string]interface{}{
-						"RedrivePolicy": map[string]interface{}{"deadLetterTargetArn": "arn:aws:sqs:us-east-1:123456789012:dlq", "maxReceiveCount": 5},
+						"RedrivePolicy":        map[string]interface{}{"deadLetterTargetArn": "arn:aws:sqs:us-east-1:123456789012:dlq", "maxReceiveCount": 5},
+						"SqsManagedSseEnabled": true,
 					},
 				},
 				"Table": {
 					Type: "AWS::DynamoDB::Table",
 					Properties: map[string]interface{}{
 						"BillingMode": "PAY_PER_REQUEST",
+						"SSESpecification": map[string]interface{}{
+							"SSEEnabled": true,
+						},
 						"PointInTimeRecoverySpecification": map[string]interface{}{
 							"PointInTimeRecoveryEnabled": true,
 						},
@@ -126,7 +134,8 @@ func TestEvaluateTemplatesPassesHealthyTemplate(t *testing.T) {
 				"Function": {
 					Type: "AWS::Lambda::Function",
 					Properties: map[string]interface{}{
-						"Timeout": 15,
+						"Timeout":                      15,
+						"ReservedConcurrentExecutions": 10,
 					},
 				},
 				"FunctionLogGroup": {
@@ -145,6 +154,10 @@ func TestEvaluateTemplatesPassesHealthyTemplate(t *testing.T) {
 					Type: "AWS::ApiGatewayV2::Stage",
 					Properties: map[string]interface{}{
 						"AccessLogSettings": map[string]interface{}{"DestinationArn": "arn:aws:logs:..."},
+						"DefaultRouteSettings": map[string]interface{}{
+							"ThrottlingBurstLimit": 100,
+							"ThrottlingRateLimit":  50,
+						},
 					},
 				},
 				"Role": {

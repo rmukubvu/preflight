@@ -141,6 +141,47 @@ func TestBuildHTTPChecksResolvesStackResources(t *testing.T) {
 	}
 }
 
+func TestBuildHTTPScenariosResolvesURLs(t *testing.T) {
+	t.Parallel()
+
+	client := fakeClient{
+		resources: []awsclient.StackResource{
+			{LogicalID: "HttpApi", PhysicalID: "api-123", Type: "AWS::ApiGatewayV2::Api"},
+		},
+		apis: []awsclient.APIDetail{
+			{APIID: "api-123", Name: "fixture-http-api"},
+		},
+		invokeURL: "http://127.0.0.1:4566/_aws/execute-api/api-123",
+	}
+
+	opts := Options{
+		StackName: "SmokeFixtureStack",
+		Config: config.Config{
+			Assertions: config.AssertionsConfig{
+				Behavioural: config.BehaviouralConfig{
+					HTTP: []config.HTTPCheckConfig{{
+						API:            "HttpApi",
+						Method:         "get",
+						Path:           "jobs",
+						ExpectedStatus: http.StatusOK,
+					}},
+				},
+			},
+		},
+	}
+
+	scenarios, err := buildHTTPScenarios(context.Background(), client, opts)
+	if err != nil {
+		t.Fatalf("buildHTTPScenarios returned error: %v", err)
+	}
+	if len(scenarios) != 1 {
+		t.Fatalf("expected 1 scenario, got %d", len(scenarios))
+	}
+	if got := scenarios[0].URL; got != "http://127.0.0.1:4566/_aws/execute-api/api-123/jobs" {
+		t.Fatalf("unexpected scenario url %q", got)
+	}
+}
+
 func TestRunChecksAggregatesSuccessesAndFailures(t *testing.T) {
 	t.Parallel()
 
@@ -215,5 +256,16 @@ func TestPercentileLatency(t *testing.T) {
 
 	if got := percentileLatency(nil, 95); got != 0 {
 		t.Fatalf("expected zero for empty slice, got %s", got)
+	}
+}
+
+func TestNormalizeRunner(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeRunner(""); got != runnerAuto {
+		t.Fatalf("expected empty runner to normalize to auto, got %q", got)
+	}
+	if got := normalizeRunner("K6"); got != runnerK6 {
+		t.Fatalf("expected K6 runner to normalize to k6, got %q", got)
 	}
 }
