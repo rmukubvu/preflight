@@ -84,6 +84,11 @@ func findCDKWithLookPath(lookPath func(string) (string, error)) (string, []strin
 	return "", nil, fmt.Errorf("cdk not found — install via: npm install -g aws-cdk")
 }
 
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // emulatorEnv returns the environment variables needed to redirect AWS SDK
 // calls to the local emulator endpoint.
 func emulatorEnv(endpoint string) []string {

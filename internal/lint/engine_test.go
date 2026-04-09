@@ -124,8 +124,10 @@ func TestEvaluateTemplatesPassesHealthyTemplate(t *testing.T) {
 					},
 				},
 				"Function": {
-					Type:       "AWS::Lambda::Function",
-					Properties: map[string]interface{}{},
+					Type: "AWS::Lambda::Function",
+					Properties: map[string]interface{}{
+						"Timeout": 15,
+					},
 				},
 				"FunctionLogGroup": {
 					Type: "AWS::Logs::LogGroup",
@@ -198,6 +200,60 @@ func TestLoadTemplatesReadsSynthesizedTemplates(t *testing.T) {
 	if templates[0].Name != "Stack.template.json" {
 		t.Fatalf("unexpected template name %q", templates[0].Name)
 	}
+}
+
+func TestEvaluateTemplatesFindsEventDrivenDurabilityGaps(t *testing.T) {
+	tpl := TemplateFile{
+		Name: "Evented.template.json",
+		Template: Template{
+			Resources: map[string]Resource{
+				"DataStream": {
+					Type:       "AWS::Kinesis::Stream",
+					Properties: map[string]interface{}{},
+				},
+				"PipelineStateMachine": {
+					Type:       "AWS::StepFunctions::StateMachine",
+					Properties: map[string]interface{}{},
+				},
+				"Rule": {
+					Type: "AWS::Events::Rule",
+					Properties: map[string]interface{}{
+						"Targets": []interface{}{
+							map[string]interface{}{
+								"Id":  "InvokeWorker",
+								"Arn": "arn:aws:lambda:us-east-1:000000000000:function:worker",
+							},
+						},
+					},
+				},
+				"Subscription": {
+					Type: "AWS::SNS::Subscription",
+					Properties: map[string]interface{}{
+						"Protocol": "lambda",
+					},
+				},
+				"StreamMapping": {
+					Type: "AWS::Lambda::EventSourceMapping",
+					Properties: map[string]interface{}{
+						"EventSourceArn": map[string]interface{}{
+							"Fn::GetAtt": []interface{}{"DataStream", "Arn"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := EvaluateTemplates([]TemplateFile{tpl})
+
+	assertHasRule(t, result, "sfn-logging")
+	assertHasRule(t, result, "sfn-tracing")
+	assertHasRule(t, result, "eventbridge-retry-policy")
+	assertHasRule(t, result, "eventbridge-dlq")
+	assertHasRule(t, result, "sns-redrive-policy")
+	assertHasRule(t, result, "stream-retry-budget")
+	assertHasRule(t, result, "stream-batch-bisect")
+	assertHasRule(t, result, "stream-batching-window")
 }
 
 func assertHasRule(t *testing.T, result Result, ruleID string) {

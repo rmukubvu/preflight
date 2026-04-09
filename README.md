@@ -40,24 +40,19 @@ API Gateway -> Lambda -> SQS -> Lambda -> DynamoDB
 
 ## Current State
 
-`preflight` is in transition from a Floci-first tool to an emulator-oriented
-validator.
+`preflight` is an emulator-oriented validator for local AWS delivery loops.
 
 What is true today:
 
 - the root CLI exists at `cmd/preflight/main.go`
+- `preflight lint` runs a fast static readiness pass for CDK stacks
+- `preflight deploy` runs static lint first, then deploys into the configured emulator
+- the direct CLI deploy path can target `stratus`, `floci`, or a custom endpoint
 - the smoke harness can run against `stratus` or `floci`
 - the smoke harness defaults to `stratus`
 - the setup/config surface still carries a legacy `floci:` block for
   compatibility
-- the direct `preflight deploy` command path is still Floci-backed internally
-
-So the practical rule is:
-
-- use the smoke harness for `stratus`
-- use direct `preflight deploy` when you want the older Floci-backed flow
-
-That split is temporary, but it is the honest current state of the repo.
+- `preflight lint` currently supports CDK/CloudFormation stacks only
 
 ## What You Need
 
@@ -127,9 +122,9 @@ such as:
 
 ## Two Runtime Modes
 
-### 1. Floci-backed CLI deploy path
+### 1. Direct CLI deploy path
 
-This is the older built-in path.
+This is the main built-in path.
 
 When you run:
 
@@ -140,12 +135,11 @@ When you run:
 `preflight` currently:
 
 1. loads `.preflight.yaml`
-2. starts Floci in Docker if needed
-3. deploys the CDK or Terraform stack into that local endpoint
-4. discovers resources
-5. runs structural, wiring, IAM, and behavioural assertions
-
-This path is still what the main deploy command is wired to internally.
+2. runs `preflight lint` first for CDK stacks unless you pass `--skip-lint`
+3. starts the configured emulator if needed
+4. deploys the CDK or Terraform stack into that local endpoint
+5. discovers resources
+6. runs structural, wiring, IAM, and behavioural assertions
 
 ### 2. Emulator smoke harness
 
@@ -264,13 +258,13 @@ assertions:
           id: job-123
 ```
 
-Note the legacy `floci:` key. That is still what the saved config schema uses
-today, even though the smoke harness can target `stratus`.
+Note the legacy `floci:` key. That remains in the schema for backward
+compatibility, even though the runtime manager now targets a general emulator.
 
 ## Using preflight With stratus
 
-The validated `stratus` path today is the smoke harness, not the older direct
-deploy path.
+The safest `stratus` path is still the smoke harness because it exercises the
+full fixture loop end to end.
 
 From the `preflight` repo root:
 
@@ -317,7 +311,7 @@ Or just use:
 ./dist/preflight deploy --stack-name MyStack --no-ai
 ```
 
-That direct deploy path still starts Floci internally.
+That direct deploy path now uses the configured emulator backend.
 
 ## Smoke Fixtures
 
@@ -440,10 +434,11 @@ make tidy
 
 Today the strongest local path is:
 
+- CDK static readiness linting
 - CDK fixture deployment
 - structural, wiring, IAM, and behavioural assertions
 - `stratus` validation through the smoke harness
-- Floci validation through the direct deploy path and smoke harness
+- emulator-backed validation through the direct deploy path and smoke harness
 
 Terraform support exists, but it is still less mature than the CDK path.
 
@@ -454,8 +449,8 @@ local AWS emulator, not as emulator implementation code itself.
 
 Today:
 
-- direct CLI deploy is still Floci-backed
+- direct CLI deploy runs lint first for CDK stacks and can target `stratus`, `floci`, or a custom endpoint
 - the smoke harness is the best path for `stratus`
-- the repo is moving toward a cleaner emulator-oriented model
+- the repo still carries a legacy `floci:` config block for backward compatibility
 
 That is the state this README now documents.

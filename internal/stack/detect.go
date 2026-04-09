@@ -1,30 +1,30 @@
-package deploy
+package stack
 
 import (
 	"os"
 	"path/filepath"
 )
 
-// StackType identifies the IaC tool managing the stack.
-type StackType string
+// Type identifies the IaC tool managing the stack.
+type Type string
 
 const (
-	StackTypeCDK       StackType = "cdk"
-	StackTypeTerraform StackType = "terraform"
-	StackTypeUnknown   StackType = ""
+	TypeCDK       Type = "cdk"
+	TypeTerraform Type = "terraform"
+	TypeUnknown   Type = ""
 )
 
-// DetectStackType infers the stack type from files in dir.
+// Detect infers the stack type from files in dir.
 // It looks for cdk.json (CDK) or *.tf files (Terraform).
-// Returns StackTypeUnknown when neither is found.
-func DetectStackType(dir string) StackType {
+// Returns TypeUnknown when neither is found.
+func Detect(dir string) Type {
 	if fileExists(filepath.Join(dir, "cdk.json")) {
-		return StackTypeCDK
+		return TypeCDK
 	}
 	if hasTerraformFiles(dir) {
-		return StackTypeTerraform
+		return TypeTerraform
 	}
-	return StackTypeUnknown
+	return TypeUnknown
 }
 
 func fileExists(path string) bool {

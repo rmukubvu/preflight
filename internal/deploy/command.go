@@ -13,7 +13,9 @@ import (
 	"github.com/rmukubvu/preflight/internal/config"
 	"github.com/rmukubvu/preflight/internal/diagnosis"
 	"github.com/rmukubvu/preflight/internal/emulator"
+	"github.com/rmukubvu/preflight/internal/lint"
 	"github.com/rmukubvu/preflight/internal/report"
+	"github.com/rmukubvu/preflight/internal/stack"
 	awsclient "github.com/rmukubvu/preflight/pkg/aws"
 )
 
@@ -25,6 +27,8 @@ func NewCommand() *cobra.Command {
 		stackName  string
 		reportFile string
 		noAI       bool
+		skipLint   bool
+		lintStrict bool
 	)
 
 	cmd := &cobra.Command{
@@ -74,6 +78,8 @@ Exit code 1: one or more assertions failed.`,
 				stackName:  stackName,
 				reportFile: reportFile,
 				noAI:       noAI,
+				skipLint:   skipLint,
+				lintStrict: lintStrict,
 			})
 		},
 	}
@@ -83,6 +89,8 @@ Exit code 1: one or more assertions failed.`,
 	cmd.Flags().StringVar(&stackName, "stack-name", "", "CloudFormation stack name for assertions")
 	cmd.Flags().StringVar(&reportFile, "report", "", "Write JSON report to file")
 	cmd.Flags().BoolVar(&noAI, "no-ai", false, "Disable AI diagnosis")
+	cmd.Flags().BoolVar(&skipLint, "skip-lint", false, "Skip the static readiness lint pass before deploy")
+	cmd.Flags().BoolVar(&lintStrict, "lint-strict", false, "Fail deploy when lint reports warnings as well as errors")
 
 	return cmd
 }
@@ -94,6 +102,8 @@ type runConfig struct {
 	stackName  string
 	reportFile string
 	noAI       bool
+	skipLint   bool
+	lintStrict bool
 }
 
 func runDeploy(ctx context.Context, rc runConfig) error {
@@ -104,6 +114,24 @@ func runDeploy(ctx context.Context, rc runConfig) error {
 
 	// ── Detect stack type ──────────────────────────────────────────────────
 	fmt.Fprintf(w, "  %s %s detected\n", stylePassText("✓"), rc.stackType)
+
+	// ── Static readiness lint ──────────────────────────────────────────────
+	if rc.skipLint {
+		fmt.Fprintf(w, "  %s static readiness lint skipped\n", styleMutedText("•"))
+	} else if rc.stackType == stack.TypeCDK {
+		report.PrintStep(w, "Running static readiness checks...", "")
+		if _, err := lint.Run(ctx, w, lint.Options{
+			StackType: rc.stackType,
+			StackDir:  rc.stackDir,
+			StackName: rc.stackName,
+			CDKApp:    rc.cfg.Stack.CDKApp,
+			Strict:    rc.lintStrict,
+		}); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(w, "  %s static readiness lint currently supports CDK only; skipping for %s\n", styleMutedText("•"), rc.stackType)
+	}
 
 	// ── Start emulator ─────────────────────────────────────────────────────
 	emulatorMgr := emulator.NewManager(rc.cfg.Emulator)

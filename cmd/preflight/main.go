@@ -31,8 +31,9 @@ func newRootCommand() *cobra.Command {
 		Use:   "preflight",
 		Short: "Validate CDK and Terraform stacks against a local AWS emulator before deploying to AWS",
 		Long: `preflight runs your infrastructure stack against a local AWS emulator,
-executes structural, wiring, IAM, and behavioural assertions, and provides
-AI-assisted diagnosis when checks fail.
+checks synthesized CDK stacks for readiness gaps, executes structural, wiring,
+IAM, and behavioural assertions, and provides AI-assisted diagnosis when checks
+fail.
 
 Get started:
   preflight setup     Configure via browser UI

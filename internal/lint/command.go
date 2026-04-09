@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rmukubvu/preflight/internal/config"
-	"github.com/rmukubvu/preflight/internal/deploy"
+	"github.com/rmukubvu/preflight/internal/stack"
 )
 
 var (
@@ -58,25 +58,25 @@ deploy anything to AWS.`,
 				}
 			}
 
-			st := deploy.StackType(stackType)
-			if st == deploy.StackTypeUnknown && cfg.Stack.Type != "" {
-				st = deploy.StackType(cfg.Stack.Type)
+			st := stack.Type(stackType)
+			if st == stack.TypeUnknown && cfg.Stack.Type != "" {
+				st = stack.Type(cfg.Stack.Type)
 			}
-			if st == deploy.StackTypeUnknown {
-				st = deploy.DetectStackType(stackDir)
+			if st == stack.TypeUnknown {
+				st = stack.Detect(stackDir)
 			}
-			if st == deploy.StackTypeUnknown {
+			if st == stack.TypeUnknown {
 				return fmt.Errorf("could not detect stack type — set stack.type in .preflight.yaml or use --stack-type")
 			}
 
-			rc := runConfig{
-				cfg:       cfg,
-				stackType: st,
-				stackDir:  stackDir,
-				stackName: stackName,
-				strict:    strict,
-			}
-			return runLint(cmd.Context(), rc)
+			_, err = Run(cmd.Context(), os.Stdout, Options{
+				StackType: st,
+				StackDir:  stackDir,
+				StackName: stackName,
+				CDKApp:    cfg.Stack.CDKApp,
+				Strict:    strict,
+			})
+			return err
 		},
 	}
 
@@ -88,35 +88,35 @@ deploy anything to AWS.`,
 	return cmd
 }
 
-type runConfig struct {
-	cfg       config.Config
-	stackType deploy.StackType
-	stackDir  string
-	stackName string
-	strict    bool
+// Options configures a lint run.
+type Options struct {
+	StackType stack.Type
+	StackDir  string
+	StackName string
+	CDKApp    string
+	Strict    bool
 }
 
-func runLint(ctx context.Context, rc runConfig) error {
-	w := os.Stdout
-
+// Run executes the static readiness pass and writes a terminal summary.
+func Run(ctx context.Context, w io.Writer, opts Options) (Result, error) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  %s\n\n", styleAccent.Render("preflight lint"))
-	fmt.Fprintf(w, "  %s %s detected\n", stylePass.Render("✓"), rc.stackType)
+	fmt.Fprintf(w, "  %s %s detected\n", stylePass.Render("✓"), opts.StackType)
 
-	if rc.stackType != deploy.StackTypeCDK {
-		return fmt.Errorf("static lint currently supports CDK/CloudFormation stacks only; detected %s", rc.stackType)
+	if opts.StackType != stack.TypeCDK {
+		return Result{}, fmt.Errorf("static lint currently supports CDK/CloudFormation stacks only; detected %s", opts.StackType)
 	}
 
-	synthDir, err := synthCDK(ctx, rc.stackDir, rc.stackName, rc.cfg.Stack.CDKApp)
+	synthDir, err := synthCDK(ctx, opts.StackDir, opts.StackName, opts.CDKApp)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	defer os.RemoveAll(synthDir)
 	fmt.Fprintf(w, "  %s synthesized templates %s\n", stylePass.Render("✓"), styleMuted.Render(synthDir))
 
 	templates, err := LoadTemplates(synthDir)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 
 	result := EvaluateTemplates(templates)
@@ -125,36 +125,41 @@ func runLint(ctx context.Context, rc runConfig) error {
 
 	switch {
 	case result.HasErrors():
-		return fmt.Errorf("lint found blocking readiness issues")
-	case rc.strict && result.HasFindings():
-		return fmt.Errorf("lint found readiness warnings in strict mode")
+		return result, fmt.Errorf("lint found blocking readiness issues")
+	case opts.Strict && result.HasFindings():
+		return result, fmt.Errorf("lint found readiness warnings in strict mode")
 	default:
-		return nil
+		return result, nil
 	}
 }
 
 func printSummary(w io.Writer, result Result) {
 	counts := result.CountsByCategory()
 	if len(result.Findings) == 0 {
-		fmt.Fprintf(w, "  %s no readiness findings detected in the synthesized templates\n\n", stylePass.Render("✓"))
+		fmt.Fprintf(w, "  %s no readiness findings detected in the synthesized templates\n", stylePass.Render("✓"))
+		for _, score := range result.Scores() {
+			fmt.Fprintf(w, "  %s %-14s %s\n",
+				stylePass.Render("100"),
+				styleHeader.Render(string(score.Category)),
+				styleMuted.Render("clear in current rule pack"),
+			)
+		}
+		fmt.Fprintln(w)
 		return
 	}
 
-	order := []Category{
-		CategorySecurity,
-		CategoryReliability,
-		CategoryObservability,
-		CategoryScalability,
-	}
 	fmt.Fprintln(w)
-	for _, category := range order {
-		if counts[category] == 0 {
-			continue
+	for _, score := range result.Scores() {
+		scoreText := stylePass.Render(fmt.Sprintf("%3d", score.Score))
+		if score.Errors > 0 {
+			scoreText = styleFail.Render(fmt.Sprintf("%3d", score.Score))
+		} else if score.Warnings > 0 {
+			scoreText = styleWarning.Render(fmt.Sprintf("%3d", score.Score))
 		}
 		fmt.Fprintf(w, "  %s %-14s %s\n",
-			styleWarning.Render("•"),
-			styleHeader.Render(string(category)),
-			styleMuted.Render(fmt.Sprintf("%d finding(s)", counts[category])),
+			scoreText,
+			styleHeader.Render(string(score.Category)),
+			styleMuted.Render(fmt.Sprintf("%d finding(s)", counts[score.Category])),
 		)
 	}
 	fmt.Fprintln(w)

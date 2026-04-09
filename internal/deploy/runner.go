@@ -2,7 +2,11 @@
 // to the local emulator instead of real AWS.
 package deploy
 
-import "context"
+import (
+	"context"
+
+	"github.com/rmukubvu/preflight/internal/stack"
+)
 
 // Runner deploys an IaC stack.
 type Runner interface {
@@ -11,4 +15,19 @@ type Runner interface {
 
 	// StackName returns the identifier for the deployed stack.
 	StackName() string
+}
+
+// StackType is retained as an alias for deploy-facing code while stack type
+// detection lives in the shared internal/stack package.
+type StackType = stack.Type
+
+const (
+	StackTypeCDK       = stack.TypeCDK
+	StackTypeTerraform = stack.TypeTerraform
+	StackTypeUnknown   = stack.TypeUnknown
+)
+
+// DetectStackType preserves the original deploy package entrypoint.
+func DetectStackType(dir string) StackType {
+	return stack.Detect(dir)
 }

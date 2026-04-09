@@ -43,6 +43,14 @@ type Result struct {
 	Findings []Finding
 }
 
+// CategoryScore summarizes heuristic readiness for one category.
+type CategoryScore struct {
+	Category Category
+	Score    int
+	Errors   int
+	Warnings int
+}
+
 // HasErrors reports whether any error-severity findings exist.
 func (r Result) HasErrors() bool {
 	for _, finding := range r.Findings {
@@ -65,6 +73,47 @@ func (r Result) CountsByCategory() map[Category]int {
 		counts[finding.Category]++
 	}
 	return counts
+}
+
+// Scores returns heuristic readiness scores by category.
+func (r Result) Scores() []CategoryScore {
+	order := []Category{
+		CategorySecurity,
+		CategoryReliability,
+		CategoryObservability,
+		CategoryScalability,
+	}
+
+	type bucket struct {
+		errors   int
+		warnings int
+	}
+	buckets := make(map[Category]bucket)
+	for _, finding := range r.Findings {
+		b := buckets[finding.Category]
+		if finding.Severity == SeverityError {
+			b.errors++
+		} else {
+			b.warnings++
+		}
+		buckets[finding.Category] = b
+	}
+
+	scores := make([]CategoryScore, 0, len(order))
+	for _, category := range order {
+		b := buckets[category]
+		score := 100 - (35 * b.errors) - (12 * b.warnings)
+		if score < 0 {
+			score = 0
+		}
+		scores = append(scores, CategoryScore{
+			Category: category,
+			Score:    score,
+			Errors:   b.errors,
+			Warnings: b.warnings,
+		})
+	}
+	return scores
 }
 
 // TemplateFile is a synthesized CloudFormation template ready for analysis.
@@ -172,6 +221,14 @@ func evaluateTemplate(template TemplateFile) []Finding {
 			findings = append(findings, lambdaObservabilityRules(template, logicalID, resource)...)
 		case "AWS::ApiGatewayV2::Stage", "AWS::ApiGateway::Stage":
 			findings = append(findings, apiLoggingRules(template.Name, logicalID, resource)...)
+		case "AWS::StepFunctions::StateMachine":
+			findings = append(findings, stepFunctionsRules(template.Name, logicalID, resource)...)
+		case "AWS::Events::Rule":
+			findings = append(findings, eventBridgeTargetRules(template.Name, logicalID, resource)...)
+		case "AWS::SNS::Subscription":
+			findings = append(findings, snsSubscriptionRules(template.Name, logicalID, resource)...)
+		case "AWS::Lambda::EventSourceMapping":
+			findings = append(findings, streamEventSourceRules(template, logicalID, resource)...)
 		case "AWS::IAM::Role":
 			findings = append(findings, iamRoleRules(template.Name, logicalID, resource)...)
 		case "AWS::IAM::Policy", "AWS::IAM::ManagedPolicy":
@@ -306,6 +363,20 @@ func dynamoReliabilityRules(template TemplateFile, logicalID string, resource Re
 }
 
 func lambdaObservabilityRules(template TemplateFile, logicalID string, _ Resource) []Finding {
+	var findings []Finding
+	resource := template.Template.Resources[logicalID]
+	if _, ok := resource.Properties["Timeout"]; !ok {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryReliability,
+			RuleID:         "lambda-timeout-explicit",
+			TemplateName:   template.Name,
+			ResourceID:     logicalID,
+			Message:        "Lambda function does not set an explicit timeout.",
+			Recommendation: "Set Timeout explicitly so failure budgets stay intentional as the function evolves.",
+		})
+	}
+
 	for otherID, other := range template.Template.Resources {
 		if other.Type != "AWS::Logs::LogGroup" {
 			continue
@@ -314,9 +385,9 @@ func lambdaObservabilityRules(template TemplateFile, logicalID string, _ Resourc
 			continue
 		}
 		if numberAt(other.Properties, "RetentionInDays") > 0 {
-			return nil
+			return findings
 		}
-		return []Finding{{
+		findings = append(findings, Finding{
 			Severity:       SeverityWarning,
 			Category:       CategoryObservability,
 			RuleID:         "lambda-log-retention",
@@ -324,10 +395,11 @@ func lambdaObservabilityRules(template TemplateFile, logicalID string, _ Resourc
 			ResourceID:     otherID,
 			Message:        "Lambda log group exists but does not set retention.",
 			Recommendation: "Set RetentionInDays on the Lambda log group so logs stay manageable and explicit.",
-		}}
+		})
+		return findings
 	}
 
-	return []Finding{{
+	findings = append(findings, Finding{
 		Severity:       SeverityWarning,
 		Category:       CategoryObservability,
 		RuleID:         "lambda-log-retention",
@@ -335,7 +407,8 @@ func lambdaObservabilityRules(template TemplateFile, logicalID string, _ Resourc
 		ResourceID:     logicalID,
 		Message:        "Lambda function has no explicit CloudWatch log group with retention configured.",
 		Recommendation: "Create an AWS::Logs::LogGroup for the function and set RetentionInDays.",
-	}}
+	})
+	return findings
 }
 
 func apiLoggingRules(templateName, logicalID string, resource Resource) []Finding {
@@ -369,6 +442,137 @@ func iamRoleRules(templateName, logicalID string, resource Resource) []Finding {
 
 func iamPolicyDocumentRules(templateName, logicalID string, resource Resource) []Finding {
 	return lintPolicyDocument(templateName, logicalID, nestedMap(resource.Properties, "PolicyDocument"))
+}
+
+func stepFunctionsRules(templateName, logicalID string, resource Resource) []Finding {
+	var findings []Finding
+	logging := nestedMap(resource.Properties, "LoggingConfiguration")
+	if len(logging) == 0 || strings.EqualFold(stringAt(logging, "Level"), "OFF") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryObservability,
+			RuleID:         "sfn-logging",
+			TemplateName:   templateName,
+			ResourceID:     logicalID,
+			Message:        "Step Functions state machine does not configure execution logging.",
+			Recommendation: "Add LoggingConfiguration with an explicit log destination and level.",
+		})
+	}
+
+	tracing := nestedMap(resource.Properties, "TracingConfiguration")
+	if !boolAt(tracing, "Enabled") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryObservability,
+			RuleID:         "sfn-tracing",
+			TemplateName:   templateName,
+			ResourceID:     logicalID,
+			Message:        "Step Functions state machine does not enable tracing.",
+			Recommendation: "Enable X-Ray tracing on the state machine when request-path debugging matters.",
+		})
+	}
+
+	return findings
+}
+
+func eventBridgeTargetRules(templateName, logicalID string, resource Resource) []Finding {
+	var findings []Finding
+	for _, targetValue := range arrayAt(resource.Properties, "Targets") {
+		target := asMap(targetValue)
+		if len(target) == 0 {
+			continue
+		}
+		targetID := logicalID
+		if id := stringAt(target, "Id"); id != "" {
+			targetID = logicalID + ":" + id
+		}
+		if len(nestedMap(target, "RetryPolicy")) == 0 {
+			findings = append(findings, Finding{
+				Severity:       SeverityWarning,
+				Category:       CategoryReliability,
+				RuleID:         "eventbridge-retry-policy",
+				TemplateName:   templateName,
+				ResourceID:     targetID,
+				Message:        "EventBridge target does not configure retry policy.",
+				Recommendation: "Set RetryPolicy so transient downstream failures do not silently vanish.",
+			})
+		}
+		if len(nestedMap(target, "DeadLetterConfig")) == 0 {
+			findings = append(findings, Finding{
+				Severity:       SeverityWarning,
+				Category:       CategoryReliability,
+				RuleID:         "eventbridge-dlq",
+				TemplateName:   templateName,
+				ResourceID:     targetID,
+				Message:        "EventBridge target has no dead-letter queue.",
+				Recommendation: "Add DeadLetterConfig so undeliverable events can be inspected and replayed.",
+			})
+		}
+	}
+	return findings
+}
+
+func snsSubscriptionRules(templateName, logicalID string, resource Resource) []Finding {
+	protocol := strings.ToLower(stringAt(resource.Properties, "Protocol"))
+	switch protocol {
+	case "lambda", "sqs", "http", "https":
+	default:
+		return nil
+	}
+	if _, ok := resource.Properties["RedrivePolicy"]; ok {
+		return nil
+	}
+	return []Finding{{
+		Severity:       SeverityWarning,
+		Category:       CategoryReliability,
+		RuleID:         "sns-redrive-policy",
+		TemplateName:   templateName,
+		ResourceID:     logicalID,
+		Message:        "SNS subscription does not configure a redrive policy.",
+		Recommendation: "Add RedrivePolicy so failed deliveries do not disappear without an audit trail.",
+	}}
+}
+
+func streamEventSourceRules(template TemplateFile, logicalID string, resource Resource) []Finding {
+	if !isStreamEventSource(template.Template.Resources, resource.Properties["EventSourceArn"]) {
+		return nil
+	}
+
+	var findings []Finding
+	if _, ok := resource.Properties["MaximumRetryAttempts"]; !ok {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryReliability,
+			RuleID:         "stream-retry-budget",
+			TemplateName:   template.Name,
+			ResourceID:     logicalID,
+			Message:        "Stream event source mapping does not set MaximumRetryAttempts.",
+			Recommendation: "Set MaximumRetryAttempts explicitly so replay behavior under poison records is bounded.",
+		})
+	}
+	if _, ok := resource.Properties["BisectBatchOnFunctionError"]; !ok {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryScalability,
+			RuleID:         "stream-batch-bisect",
+			TemplateName:   template.Name,
+			ResourceID:     logicalID,
+			Message:        "Stream event source mapping does not configure BisectBatchOnFunctionError.",
+			Recommendation: "Enable BisectBatchOnFunctionError to reduce backlog amplification from a single bad record.",
+		})
+	}
+	if _, ok := resource.Properties["MaximumBatchingWindowInSeconds"]; !ok {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryScalability,
+			RuleID:         "stream-batching-window",
+			TemplateName:   template.Name,
+			ResourceID:     logicalID,
+			Message:        "Stream event source mapping does not set a batching window.",
+			Recommendation: "Set MaximumBatchingWindowInSeconds intentionally so throughput/latency tradeoffs stay explicit.",
+		})
+	}
+	return findings
 }
 
 func lintPolicyDocument(templateName, logicalID string, document map[string]interface{}) []Finding {
@@ -423,6 +627,36 @@ func hasDynamoAutoScalingTarget(resources map[string]Resource, logicalID string)
 		resourceID := stringAt(resource.Properties, "ResourceId")
 		if strings.Contains(resourceID, "table/"+logicalID) || referencesLogicalID(resource.Properties["ResourceId"], logicalID) {
 			return true
+		}
+	}
+	return false
+}
+
+func isStreamEventSource(resources map[string]Resource, value interface{}) bool {
+	switch v := value.(type) {
+	case string:
+		return strings.Contains(v, ":kinesis:") || strings.Contains(v, "stream/")
+	case map[string]interface{}:
+		if getAtt, ok := v["Fn::GetAtt"].([]interface{}); ok && len(getAtt) > 0 {
+			if logicalID, ok := getAtt[0].(string); ok {
+				resource, exists := resources[logicalID]
+				return exists && (resource.Type == "AWS::Kinesis::Stream" || resource.Type == "AWS::DynamoDB::Table")
+			}
+		}
+		if ref, ok := v["Ref"].(string); ok {
+			resource, exists := resources[ref]
+			return exists && (resource.Type == "AWS::Kinesis::Stream" || resource.Type == "AWS::DynamoDB::Table")
+		}
+		for _, item := range v {
+			if isStreamEventSource(resources, item) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, item := range v {
+			if isStreamEventSource(resources, item) {
+				return true
+			}
 		}
 	}
 	return false
