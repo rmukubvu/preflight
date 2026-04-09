@@ -162,6 +162,22 @@ Lint also supports structured external output:
 Both `json` and `markdown` include grouped remediation summaries so the same
 run can feed local use, CI checks, and future external surfaces.
 
+If you want those artifacts from the normal deploy path, use:
+
+```bash
+./dist/preflight deploy \
+  --stack-name MyStack \
+  --lint-report-json ./artifacts/lint.json \
+  --lint-report-markdown ./artifacts/lint.md \
+  --report ./artifacts/assertions.json
+```
+
+That gives you:
+
+- a lint JSON artifact for machine readers
+- a lint markdown summary for PR comments or review threads
+- an assertion JSON artifact for the deploy-time validation result
+
 `preflight load` uses the existing behavioural HTTP assertions as a local load
 scenario. It can deploy the stack first, then replay those HTTP paths with
 configurable concurrency and iteration counts to surface latency and failure
@@ -183,6 +199,7 @@ When you run:
 
 1. loads `.preflight.yaml`
 2. runs `preflight lint` first unless you pass `--skip-lint`
+   - this now applies to both CDK and Terraform stacks
 3. starts the configured emulator if needed
 4. deploys the CDK or Terraform stack into that local endpoint
 5. discovers resources

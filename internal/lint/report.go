@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -167,6 +169,38 @@ func WriteMarkdown(w io.Writer, report Report) error {
 		}
 	}
 
+	return nil
+}
+
+func writeArtifacts(report Report, jsonPath, markdownPath string) error {
+	if err := writeArtifact(report, jsonPath, WriteJSON); err != nil {
+		return err
+	}
+	if err := writeArtifact(report, markdownPath, WriteMarkdown); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeArtifact(report Report, path string, write func(io.Writer, Report) error) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating report directory for %s: %w", path, err)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("creating report file %s: %w", path, err)
+	}
+	defer f.Close()
+
+	if err := write(f, report); err != nil {
+		return fmt.Errorf("writing report file %s: %w", path, err)
+	}
 	return nil
 }
 

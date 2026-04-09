@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -134,5 +136,59 @@ func TestWriteMarkdownIncludesRecommendedActions(t *testing.T) {
 	}
 	if !strings.Contains(output, "lambda-log-retention") {
 		t.Fatalf("expected markdown output to mention remediation rule id, got %q", output)
+	}
+}
+
+func TestWriteArtifactsWritesJSONAndMarkdownFiles(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	jsonPath := filepath.Join(tmpDir, "reports", "lint.json")
+	mdPath := filepath.Join(tmpDir, "reports", "lint.md")
+
+	report := Report{
+		Version:   1,
+		Passed:    false,
+		StackType: stack.TypeCDK,
+		Summary: ReportSummary{
+			TotalFindings: 1,
+			Scores: []CategoryScore{
+				{Category: CategorySecurity, Score: 65, Warnings: 1},
+			},
+		},
+		Findings: []ReportFinding{
+			{
+				Severity:     SeverityWarning,
+				Category:     CategorySecurity,
+				RuleID:       "api-auth",
+				Message:      "API route does not configure an authorizer.",
+				TemplateName: "fixture.template.json",
+				ResourceID:   "JobsRoute",
+				Diagnosis: ReportDiagnosis{
+					Provider:    "rulebook",
+					Explanation: "Public routes should be intentional.",
+				},
+			},
+		},
+	}
+
+	if err := writeArtifacts(report, jsonPath, mdPath); err != nil {
+		t.Fatalf("writeArtifacts returned error: %v", err)
+	}
+
+	jsonData, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatalf("reading JSON artifact: %v", err)
+	}
+	if !strings.Contains(string(jsonData), "\"rule_id\": \"api-auth\"") {
+		t.Fatalf("expected JSON artifact to contain rule id, got %q", string(jsonData))
+	}
+
+	markdownData, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatalf("reading markdown artifact: %v", err)
+	}
+	if !strings.Contains(string(markdownData), "preflight lint") {
+		t.Fatalf("expected markdown artifact header, got %q", string(markdownData))
 	}
 }

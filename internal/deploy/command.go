@@ -15,20 +15,21 @@ import (
 	"github.com/rmukubvu/preflight/internal/emulator"
 	"github.com/rmukubvu/preflight/internal/lint"
 	"github.com/rmukubvu/preflight/internal/report"
-	"github.com/rmukubvu/preflight/internal/stack"
 	awsclient "github.com/rmukubvu/preflight/pkg/aws"
 )
 
 // NewCommand returns the cobra.Command for `preflight deploy`.
 func NewCommand() *cobra.Command {
 	var (
-		stackType  string
-		stackDir   string
-		stackName  string
-		reportFile string
-		noAI       bool
-		skipLint   bool
-		lintStrict bool
+		stackType              string
+		stackDir               string
+		stackName              string
+		reportFile             string
+		lintReportJSONFile     string
+		lintReportMarkdownFile string
+		noAI                   bool
+		skipLint               bool
+		lintStrict             bool
 	)
 
 	cmd := &cobra.Command{
@@ -72,14 +73,16 @@ Exit code 1: one or more assertions failed.`,
 			}
 
 			return runDeploy(cmd.Context(), runConfig{
-				cfg:        cfg,
-				stackType:  st,
-				stackDir:   stackDir,
-				stackName:  stackName,
-				reportFile: reportFile,
-				noAI:       noAI,
-				skipLint:   skipLint,
-				lintStrict: lintStrict,
+				cfg:                    cfg,
+				stackType:              st,
+				stackDir:               stackDir,
+				stackName:              stackName,
+				reportFile:             reportFile,
+				lintReportJSONFile:     lintReportJSONFile,
+				lintReportMarkdownFile: lintReportMarkdownFile,
+				noAI:                   noAI,
+				skipLint:               skipLint,
+				lintStrict:             lintStrict,
 			})
 		},
 	}
@@ -88,6 +91,8 @@ Exit code 1: one or more assertions failed.`,
 	cmd.Flags().StringVar(&stackDir, "dir", "", "Stack directory (default: current directory)")
 	cmd.Flags().StringVar(&stackName, "stack-name", "", "CloudFormation stack name for assertions")
 	cmd.Flags().StringVar(&reportFile, "report", "", "Write JSON report to file")
+	cmd.Flags().StringVar(&lintReportJSONFile, "lint-report-json", "", "Write the pre-deploy lint JSON report to file")
+	cmd.Flags().StringVar(&lintReportMarkdownFile, "lint-report-markdown", "", "Write the pre-deploy lint markdown report to file")
 	cmd.Flags().BoolVar(&noAI, "no-ai", false, "Disable AI diagnosis")
 	cmd.Flags().BoolVar(&skipLint, "skip-lint", false, "Skip the static readiness lint pass before deploy")
 	cmd.Flags().BoolVar(&lintStrict, "lint-strict", false, "Fail deploy when lint reports warnings as well as errors")
@@ -96,14 +101,16 @@ Exit code 1: one or more assertions failed.`,
 }
 
 type runConfig struct {
-	cfg        config.Config
-	stackType  StackType
-	stackDir   string
-	stackName  string
-	reportFile string
-	noAI       bool
-	skipLint   bool
-	lintStrict bool
+	cfg                    config.Config
+	stackType              StackType
+	stackDir               string
+	stackName              string
+	reportFile             string
+	lintReportJSONFile     string
+	lintReportMarkdownFile string
+	noAI                   bool
+	skipLint               bool
+	lintStrict             bool
 }
 
 func runDeploy(ctx context.Context, rc runConfig) error {
@@ -118,21 +125,21 @@ func runDeploy(ctx context.Context, rc runConfig) error {
 	// ── Static readiness lint ──────────────────────────────────────────────
 	if rc.skipLint {
 		fmt.Fprintf(w, "  %s static readiness lint skipped\n", styleMutedText("•"))
-	} else if rc.stackType == stack.TypeCDK {
+	} else {
 		report.PrintStep(w, "Running static readiness checks...", "")
 		if _, err := lint.Run(ctx, w, lint.Options{
-			StackType: rc.stackType,
-			StackDir:  rc.stackDir,
-			StackName: rc.stackName,
-			CDKApp:    rc.cfg.Stack.CDKApp,
-			Strict:    rc.lintStrict,
-			LLM:       lint.EffectiveLLM(rc.cfg.LLM, rc.noAI),
-			Diagnose:  true,
+			StackType:          rc.stackType,
+			StackDir:           rc.stackDir,
+			StackName:          rc.stackName,
+			CDKApp:             rc.cfg.Stack.CDKApp,
+			Strict:             rc.lintStrict,
+			LLM:                lint.EffectiveLLM(rc.cfg.LLM, rc.noAI),
+			Diagnose:           true,
+			ReportJSONFile:     rc.lintReportJSONFile,
+			ReportMarkdownFile: rc.lintReportMarkdownFile,
 		}); err != nil {
 			return err
 		}
-	} else {
-		fmt.Fprintf(w, "  %s static readiness lint currently supports CDK only; skipping for %s\n", styleMutedText("•"), rc.stackType)
 	}
 
 	// ── Start emulator ─────────────────────────────────────────────────────

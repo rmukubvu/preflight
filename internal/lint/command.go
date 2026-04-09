@@ -27,12 +27,14 @@ var (
 // NewCommand returns the cobra.Command for `preflight lint`.
 func NewCommand() *cobra.Command {
 	var (
-		stackType string
-		stackDir  string
-		stackName string
-		strict    bool
-		noAI      bool
-		output    string
+		stackType          string
+		stackDir           string
+		stackName          string
+		strict             bool
+		noAI               bool
+		output             string
+		reportJSONFile     string
+		reportMarkdownFile string
 	)
 
 	cmd := &cobra.Command{
@@ -72,14 +74,16 @@ deploy anything to AWS.`,
 			}
 
 			_, err = Run(cmd.Context(), os.Stdout, Options{
-				StackType: st,
-				StackDir:  stackDir,
-				StackName: stackName,
-				CDKApp:    cfg.Stack.CDKApp,
-				Strict:    strict,
-				LLM:       EffectiveLLM(cfg.LLM, noAI),
-				Diagnose:  true,
-				Output:    output,
+				StackType:          st,
+				StackDir:           stackDir,
+				StackName:          stackName,
+				CDKApp:             cfg.Stack.CDKApp,
+				Strict:             strict,
+				LLM:                EffectiveLLM(cfg.LLM, noAI),
+				Diagnose:           true,
+				Output:             output,
+				ReportJSONFile:     reportJSONFile,
+				ReportMarkdownFile: reportMarkdownFile,
 			})
 			return err
 		},
@@ -91,20 +95,24 @@ deploy anything to AWS.`,
 	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on warnings as well as errors")
 	cmd.Flags().BoolVar(&noAI, "no-ai", false, "Disable AI diagnosis for lint findings")
 	cmd.Flags().StringVar(&output, "output", "text", "Output format: text, json, or markdown")
+	cmd.Flags().StringVar(&reportJSONFile, "report-json", "", "Write a machine-readable lint JSON report to file")
+	cmd.Flags().StringVar(&reportMarkdownFile, "report-markdown", "", "Write a markdown lint summary to file")
 
 	return cmd
 }
 
 // Options configures a lint run.
 type Options struct {
-	StackType stack.Type
-	StackDir  string
-	StackName string
-	CDKApp    string
-	Strict    bool
-	LLM       config.LLMConfig
-	Diagnose  bool
-	Output    string
+	StackType          stack.Type
+	StackDir           string
+	StackName          string
+	CDKApp             string
+	Strict             bool
+	LLM                config.LLMConfig
+	Diagnose           bool
+	Output             string
+	ReportJSONFile     string
+	ReportMarkdownFile string
 }
 
 // Run executes the static readiness pass and writes a terminal summary.
@@ -139,6 +147,9 @@ func Run(ctx context.Context, w io.Writer, opts Options) (Result, error) {
 	}
 
 	if err := renderOutput(ctx, w, opts, result, diagnoses); err != nil {
+		return Result{}, err
+	}
+	if err := writeArtifacts(NewReport(result, diagnoses, opts), opts.ReportJSONFile, opts.ReportMarkdownFile); err != nil {
 		return Result{}, err
 	}
 
