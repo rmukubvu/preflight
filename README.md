@@ -45,14 +45,15 @@ API Gateway -> Lambda -> SQS -> Lambda -> DynamoDB
 What is true today:
 
 - the root CLI exists at `cmd/preflight/main.go`
-- `preflight lint` runs a fast static readiness pass for CDK stacks
+- `preflight lint` runs a fast static readiness pass for CDK and Terraform stacks
+- `preflight load` replays HTTP behavioural checks under concurrent local load
 - `preflight deploy` runs static lint first, then deploys into the configured emulator
 - the direct CLI deploy path can target `stratus`, `floci`, or a custom endpoint
 - the smoke harness can run against `stratus` or `floci`
 - the smoke harness defaults to `stratus`
 - the setup/config surface still carries a legacy `floci:` block for
   compatibility
-- `preflight lint` currently supports CDK/CloudFormation stacks only
+- lint findings now include deterministic diagnoses, with optional AI overlay
 
 ## What You Need
 
@@ -97,6 +98,7 @@ make run-setup
 ./dist/preflight --help
 ./dist/preflight setup --help
 ./dist/preflight lint --help
+./dist/preflight load --help
 ./dist/preflight deploy --help
 ```
 
@@ -105,12 +107,16 @@ Main manual workflow:
 ```bash
 ./dist/preflight setup
 ./dist/preflight lint --stack-name MyStack
+./dist/preflight load --stack-name MyStack --vus 4 --iterations 20
 ./dist/preflight deploy --stack-name MyStack --no-ai
 ```
 
-`preflight lint` is the fast static pass. It currently supports CDK stacks by
-synthesizing CloudFormation templates and checking for common readiness gaps
-such as:
+`preflight lint` is the fast static pass. It now supports:
+
+- CDK by synthesizing CloudFormation templates
+- Terraform by parsing HCL directly
+
+It checks for common readiness gaps such as:
 
 - wildcard IAM permissions
 - S3 public access and encryption gaps
@@ -118,7 +124,19 @@ such as:
 - DynamoDB tables without PITR or autoscaling posture
 - Lambda functions without explicit log retention
 - API stages without access logging
+- API routes without explicit auth posture
+- Step Functions without logging, tracing, or timeout posture
+- EventBridge, SNS, and stream consumers without delivery durability controls
 - stacks with workload resources but no CloudWatch alarms
+
+When lint finds issues, `preflight` now prints a diagnosis for each finding.
+With no AI provider configured, it falls back to a deterministic rulebook
+explanation and fix.
+
+`preflight load` uses the existing behavioural HTTP assertions as a local load
+scenario. It can deploy the stack first, then replay those HTTP paths with
+configurable concurrency and iteration counts to surface latency and failure
+signals before AWS deployment.
 
 ## Two Runtime Modes
 
@@ -135,7 +153,7 @@ When you run:
 `preflight` currently:
 
 1. loads `.preflight.yaml`
-2. runs `preflight lint` first for CDK stacks unless you pass `--skip-lint`
+2. runs `preflight lint` first unless you pass `--skip-lint`
 3. starts the configured emulator if needed
 4. deploys the CDK or Terraform stack into that local endpoint
 5. discovers resources

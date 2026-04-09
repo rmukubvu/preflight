@@ -11,6 +11,7 @@ import (
 
 	"github.com/rmukubvu/preflight/internal/deploy"
 	"github.com/rmukubvu/preflight/internal/lint"
+	"github.com/rmukubvu/preflight/internal/load"
 	"github.com/rmukubvu/preflight/internal/setup"
 )
 
@@ -38,6 +39,7 @@ fail.
 Get started:
   preflight setup     Configure via browser UI
   preflight lint      Run static readiness checks
+  preflight load      Replay behavioural checks under load
   preflight deploy    Deploy and validate your stack`,
 		Version:      version,
 		SilenceUsage: true,
@@ -45,6 +47,7 @@ Get started:
 
 	root.AddCommand(setup.NewCommand())
 	root.AddCommand(lint.NewCommand())
+	root.AddCommand(load.NewCommand())
 	root.AddCommand(deploy.NewCommand())
 
 	return root

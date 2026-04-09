@@ -31,6 +31,7 @@ func NewCommand() *cobra.Command {
 		stackDir  string
 		stackName string
 		strict    bool
+		noAI      bool
 	)
 
 	cmd := &cobra.Command{
@@ -75,6 +76,8 @@ deploy anything to AWS.`,
 				StackName: stackName,
 				CDKApp:    cfg.Stack.CDKApp,
 				Strict:    strict,
+				LLM:       EffectiveLLM(cfg.LLM, noAI),
+				Diagnose:  true,
 			})
 			return err
 		},
@@ -84,6 +87,7 @@ deploy anything to AWS.`,
 	cmd.Flags().StringVar(&stackDir, "dir", "", "Stack directory (default: current directory)")
 	cmd.Flags().StringVar(&stackName, "stack-name", "", "CloudFormation stack name to synthesize")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on warnings as well as errors")
+	cmd.Flags().BoolVar(&noAI, "no-ai", false, "Disable AI diagnosis for lint findings")
 
 	return cmd
 }
@@ -95,6 +99,8 @@ type Options struct {
 	StackName string
 	CDKApp    string
 	Strict    bool
+	LLM       config.LLMConfig
+	Diagnose  bool
 }
 
 // Run executes the static readiness pass and writes a terminal summary.
@@ -103,10 +109,46 @@ func Run(ctx context.Context, w io.Writer, opts Options) (Result, error) {
 	fmt.Fprintf(w, "  %s\n\n", styleAccent.Render("preflight lint"))
 	fmt.Fprintf(w, "  %s %s detected\n", stylePass.Render("✓"), opts.StackType)
 
-	if opts.StackType != stack.TypeCDK {
-		return Result{}, fmt.Errorf("static lint currently supports CDK/CloudFormation stacks only; detected %s", opts.StackType)
+	var (
+		result Result
+		err    error
+	)
+	switch opts.StackType {
+	case stack.TypeCDK:
+		result, err = runCDK(ctx, w, opts)
+	case stack.TypeTerraform:
+		result, err = runTerraform(w, opts)
+	default:
+		return Result{}, fmt.Errorf("static lint currently supports CDK and Terraform stacks only; detected %s", opts.StackType)
+	}
+	if err != nil {
+		return Result{}, err
 	}
 
+	printSummary(w, result)
+	printFindings(w, result)
+	if opts.Diagnose {
+		printDiagnoses(ctx, w, opts.LLM, result)
+	}
+
+	switch {
+	case result.HasErrors():
+		return result, fmt.Errorf("lint found blocking readiness issues")
+	case opts.Strict && result.HasFindings():
+		return result, fmt.Errorf("lint found readiness warnings in strict mode")
+	default:
+		return result, nil
+	}
+}
+
+func EffectiveLLM(cfg config.LLMConfig, noAI bool) config.LLMConfig {
+	if noAI {
+		return config.LLMConfig{Provider: "none"}
+	}
+	return cfg
+}
+
+func runCDK(ctx context.Context, w io.Writer, opts Options) (Result, error) {
 	synthDir, err := synthCDK(ctx, opts.StackDir, opts.StackName, opts.CDKApp)
 	if err != nil {
 		return Result{}, err
@@ -118,19 +160,16 @@ func Run(ctx context.Context, w io.Writer, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	return EvaluateTemplates(templates), nil
+}
 
-	result := EvaluateTemplates(templates)
-	printSummary(w, result)
-	printFindings(w, result)
-
-	switch {
-	case result.HasErrors():
-		return result, fmt.Errorf("lint found blocking readiness issues")
-	case opts.Strict && result.HasFindings():
-		return result, fmt.Errorf("lint found readiness warnings in strict mode")
-	default:
-		return result, nil
+func runTerraform(w io.Writer, opts Options) (Result, error) {
+	result, err := EvaluateTerraformDir(opts.StackDir)
+	if err != nil {
+		return Result{}, err
 	}
+	fmt.Fprintf(w, "  %s parsed terraform modules %s\n", stylePass.Render("✓"), styleMuted.Render(opts.StackDir))
+	return result, nil
 }
 
 func printSummary(w io.Writer, result Result) {
@@ -188,6 +227,31 @@ func printFindings(w io.Writer, result Result) {
 		)
 		if strings.TrimSpace(finding.Recommendation) != "" {
 			fmt.Fprintf(w, "        %s %s\n", styleMuted.Render("fix:"), finding.Recommendation)
+		}
+	}
+	fmt.Fprintln(w)
+}
+
+func printDiagnoses(ctx context.Context, w io.Writer, llm config.LLMConfig, result Result) {
+	if len(result.Findings) == 0 {
+		return
+	}
+
+	fmt.Fprintln(w, styleHeader.Render("  Diagnoses"))
+	for _, finding := range result.Findings {
+		explained := DiagnoseFinding(ctx, llm, finding)
+		provider := explained.Diagnosis.ProviderName
+		if provider == "" {
+			provider = "rulebook"
+		}
+		fmt.Fprintf(w, "  %s %s %s\n",
+			styleAccent.Render("◆"),
+			styleHeader.Render(finding.RuleID),
+			styleMuted.Render(fmt.Sprintf("via %s", provider)),
+		)
+		fmt.Fprintf(w, "    %s\n", explained.Diagnosis.Explanation)
+		if strings.TrimSpace(explained.Diagnosis.Suggestion) != "" {
+			fmt.Fprintf(w, "    %s %s\n", styleMuted.Render("fix:"), explained.Diagnosis.Suggestion)
 		}
 	}
 	fmt.Fprintln(w)

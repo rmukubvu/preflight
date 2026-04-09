@@ -221,6 +221,8 @@ func evaluateTemplate(template TemplateFile) []Finding {
 			findings = append(findings, lambdaObservabilityRules(template, logicalID, resource)...)
 		case "AWS::ApiGatewayV2::Stage", "AWS::ApiGateway::Stage":
 			findings = append(findings, apiLoggingRules(template.Name, logicalID, resource)...)
+		case "AWS::ApiGatewayV2::Route", "AWS::ApiGateway::Method":
+			findings = append(findings, apiAuthRules(template.Name, logicalID, resource)...)
 		case "AWS::StepFunctions::StateMachine":
 			findings = append(findings, stepFunctionsRules(template.Name, logicalID, resource)...)
 		case "AWS::Events::Rule":
@@ -472,7 +474,38 @@ func stepFunctionsRules(templateName, logicalID string, resource Resource) []Fin
 		})
 	}
 
+	definition := flattenStringLike(resource.Properties["DefinitionString"])
+	if definition != "" && !strings.Contains(definition, "TimeoutSeconds") && !strings.Contains(definition, "TimeoutSecondsPath") {
+		findings = append(findings, Finding{
+			Severity:       SeverityWarning,
+			Category:       CategoryReliability,
+			RuleID:         "sfn-timeouts",
+			TemplateName:   templateName,
+			ResourceID:     logicalID,
+			Message:        "Step Functions state machine definition does not set task or state timeouts.",
+			Recommendation: "Add TimeoutSeconds or TimeoutSecondsPath for long-running states so stuck executions fail predictably.",
+		})
+	}
+
 	return findings
+}
+
+func apiAuthRules(templateName, logicalID string, resource Resource) []Finding {
+	authType := strings.ToUpper(strings.TrimSpace(stringAt(resource.Properties, "AuthorizationType")))
+	switch authType {
+	case "", "NONE":
+		return []Finding{{
+			Severity:       SeverityWarning,
+			Category:       CategorySecurity,
+			RuleID:         "api-auth",
+			TemplateName:   templateName,
+			ResourceID:     logicalID,
+			Message:        "API route does not configure an authorizer or non-public authorization type.",
+			Recommendation: "Set AuthorizationType explicitly and attach an authorizer when the route is not intended to be public.",
+		}}
+	default:
+		return nil
+	}
 }
 
 func eventBridgeTargetRules(templateName, logicalID string, resource Resource) []Finding {

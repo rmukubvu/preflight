@@ -126,6 +126,8 @@ func runDeploy(ctx context.Context, rc runConfig) error {
 			StackName: rc.stackName,
 			CDKApp:    rc.cfg.Stack.CDKApp,
 			Strict:    rc.lintStrict,
+			LLM:       lint.EffectiveLLM(rc.cfg.LLM, rc.noAI),
+			Diagnose:  true,
 		}); err != nil {
 			return err
 		}
