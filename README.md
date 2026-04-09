@@ -55,6 +55,20 @@ What is true today:
   compatibility
 - lint findings now include deterministic diagnoses, with optional AI overlay
 
+## Validated Loop
+
+The current proof path is explicit:
+
+1. Java SDK smoke talks to `stratus` over a real network boundary.
+2. CDK deploys a live local stack into `stratus`.
+3. `preflight` lint checks readiness conditions before deploy.
+4. `preflight deploy` validates structural, wiring, IAM, and behavioural paths.
+5. the `stratus` release gate chains the Java SDK smoke and the external `preflight` CDK smoke.
+
+That matters because the claim is not just that a stack synthesizes or creates
+resources. The claim is that the same local stack is exercised through real
+client tooling and an external validator before AWS.
+
 ## What You Need
 
 - Go `1.23+`
@@ -133,6 +147,21 @@ When lint finds issues, `preflight` now prints a diagnosis for each finding.
 With no AI provider configured, it falls back to a deterministic rulebook
 explanation and fix.
 
+Lint also supports structured external output:
+
+```bash
+./dist/preflight lint --output text
+./dist/preflight lint --output json
+./dist/preflight lint --output markdown
+```
+
+- `text` is the default terminal view
+- `json` is intended for CI, future UI work, and machine-readable findings
+- `markdown` is intended for PR comments and human review summaries
+
+Both `json` and `markdown` include grouped remediation summaries so the same
+run can feed local use, CI checks, and future external surfaces.
+
 `preflight load` uses the existing behavioural HTTP assertions as a local load
 scenario. It can deploy the stack first, then replay those HTTP paths with
 configurable concurrency and iteration counts to surface latency and failure
@@ -181,6 +210,13 @@ EMULATOR_COMMAND=stratus
 ```
 
 This is the path used for the current `stratus` integration smoke.
+
+It is also the basis for the current release-gate story:
+
+- Java SDK fixture proves client compatibility
+- CDK fixture proves deployability
+- `preflight` proves the behavioural path
+- the release gate runs them together before changes should be trusted
 
 ## CDK Quickstart
 

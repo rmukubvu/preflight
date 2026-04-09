@@ -32,6 +32,7 @@ func NewCommand() *cobra.Command {
 		stackName string
 		strict    bool
 		noAI      bool
+		output    string
 	)
 
 	cmd := &cobra.Command{
@@ -78,6 +79,7 @@ deploy anything to AWS.`,
 				Strict:    strict,
 				LLM:       EffectiveLLM(cfg.LLM, noAI),
 				Diagnose:  true,
+				Output:    output,
 			})
 			return err
 		},
@@ -88,6 +90,7 @@ deploy anything to AWS.`,
 	cmd.Flags().StringVar(&stackName, "stack-name", "", "CloudFormation stack name to synthesize")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on warnings as well as errors")
 	cmd.Flags().BoolVar(&noAI, "no-ai", false, "Disable AI diagnosis for lint findings")
+	cmd.Flags().StringVar(&output, "output", "text", "Output format: text, json, or markdown")
 
 	return cmd
 }
@@ -101,17 +104,23 @@ type Options struct {
 	Strict    bool
 	LLM       config.LLMConfig
 	Diagnose  bool
+	Output    string
 }
 
 // Run executes the static readiness pass and writes a terminal summary.
 func Run(ctx context.Context, w io.Writer, opts Options) (Result, error) {
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %s\n\n", styleAccent.Render("preflight lint"))
-	fmt.Fprintf(w, "  %s %s detected\n", stylePass.Render("✓"), opts.StackType)
+	opts.Output = normalizeOutputFormat(opts.Output)
+
+	if opts.Output == outputText {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "  %s\n\n", styleAccent.Render("preflight lint"))
+		fmt.Fprintf(w, "  %s %s detected\n", stylePass.Render("✓"), opts.StackType)
+	}
 
 	var (
-		result Result
-		err    error
+		result    Result
+		diagnoses []DiagnosedFinding
+		err       error
 	)
 	switch opts.StackType {
 	case stack.TypeCDK:
@@ -125,10 +134,12 @@ func Run(ctx context.Context, w io.Writer, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	printSummary(w, result)
-	printFindings(w, result)
 	if opts.Diagnose {
-		printDiagnoses(ctx, w, opts.LLM, result)
+		diagnoses = diagnoseFindings(ctx, opts.LLM, result)
+	}
+
+	if err := renderOutput(ctx, w, opts, result, diagnoses); err != nil {
+		return Result{}, err
 	}
 
 	switch {
@@ -154,7 +165,9 @@ func runCDK(ctx context.Context, w io.Writer, opts Options) (Result, error) {
 		return Result{}, err
 	}
 	defer os.RemoveAll(synthDir)
-	fmt.Fprintf(w, "  %s synthesized templates %s\n", stylePass.Render("✓"), styleMuted.Render(synthDir))
+	if opts.Output == outputText {
+		fmt.Fprintf(w, "  %s synthesized templates %s\n", stylePass.Render("✓"), styleMuted.Render(synthDir))
+	}
 
 	templates, err := LoadTemplates(synthDir)
 	if err != nil {
@@ -168,8 +181,26 @@ func runTerraform(w io.Writer, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	fmt.Fprintf(w, "  %s parsed terraform modules %s\n", stylePass.Render("✓"), styleMuted.Render(opts.StackDir))
+	if opts.Output == outputText {
+		fmt.Fprintf(w, "  %s parsed terraform modules %s\n", stylePass.Render("✓"), styleMuted.Render(opts.StackDir))
+	}
 	return result, nil
+}
+
+func renderOutput(ctx context.Context, w io.Writer, opts Options, result Result, diagnoses []DiagnosedFinding) error {
+	switch opts.Output {
+	case outputText:
+		printSummary(w, result)
+		printFindings(w, result)
+		printDiagnoses(w, diagnoses)
+		return nil
+	case outputJSON:
+		return WriteJSON(w, NewReport(result, diagnoses, opts))
+	case outputMarkdown:
+		return WriteMarkdown(w, NewReport(result, diagnoses, opts))
+	default:
+		return fmt.Errorf("unsupported lint output format %q", opts.Output)
+	}
 }
 
 func printSummary(w io.Writer, result Result) {
@@ -232,21 +263,19 @@ func printFindings(w io.Writer, result Result) {
 	fmt.Fprintln(w)
 }
 
-func printDiagnoses(ctx context.Context, w io.Writer, llm config.LLMConfig, result Result) {
-	if len(result.Findings) == 0 {
+func printDiagnoses(w io.Writer, diagnoses []DiagnosedFinding) {
+	if len(diagnoses) == 0 {
 		return
 	}
-
 	fmt.Fprintln(w, styleHeader.Render("  Diagnoses"))
-	for _, finding := range result.Findings {
-		explained := DiagnoseFinding(ctx, llm, finding)
+	for _, explained := range diagnoses {
 		provider := explained.Diagnosis.ProviderName
 		if provider == "" {
 			provider = "rulebook"
 		}
 		fmt.Fprintf(w, "  %s %s %s\n",
 			styleAccent.Render("◆"),
-			styleHeader.Render(finding.RuleID),
+			styleHeader.Render(explained.Finding.RuleID),
 			styleMuted.Render(fmt.Sprintf("via %s", provider)),
 		)
 		fmt.Fprintf(w, "    %s\n", explained.Diagnosis.Explanation)
@@ -255,4 +284,35 @@ func printDiagnoses(ctx context.Context, w io.Writer, llm config.LLMConfig, resu
 		}
 	}
 	fmt.Fprintln(w)
+}
+
+func diagnoseFindings(ctx context.Context, llm config.LLMConfig, result Result) []DiagnosedFinding {
+	if len(result.Findings) == 0 {
+		return nil
+	}
+
+	diagnoses := make([]DiagnosedFinding, 0, len(result.Findings))
+	for _, finding := range result.Findings {
+		diagnoses = append(diagnoses, DiagnoseFinding(ctx, llm, finding))
+	}
+	return diagnoses
+}
+
+const (
+	outputText     = "text"
+	outputJSON     = "json"
+	outputMarkdown = "markdown"
+)
+
+func normalizeOutputFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", outputText:
+		return outputText
+	case outputJSON:
+		return outputJSON
+	case "md", outputMarkdown:
+		return outputMarkdown
+	default:
+		return strings.ToLower(strings.TrimSpace(format))
+	}
 }

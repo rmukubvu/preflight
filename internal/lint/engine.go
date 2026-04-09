@@ -45,10 +45,10 @@ type Result struct {
 
 // CategoryScore summarizes heuristic readiness for one category.
 type CategoryScore struct {
-	Category Category
-	Score    int
-	Errors   int
-	Warnings int
+	Category Category `json:"category"`
+	Score    int      `json:"score"`
+	Errors   int      `json:"errors"`
+	Warnings int      `json:"warnings"`
 }
 
 // HasErrors reports whether any error-severity findings exist.
