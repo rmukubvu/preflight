@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rmukubvu/preflight/internal/deploy"
+	"github.com/rmukubvu/preflight/internal/lint"
 	"github.com/rmukubvu/preflight/internal/setup"
 )
 
@@ -35,12 +36,14 @@ AI-assisted diagnosis when checks fail.
 
 Get started:
   preflight setup     Configure via browser UI
+  preflight lint      Run static readiness checks
   preflight deploy    Deploy and validate your stack`,
 		Version:      version,
 		SilenceUsage: true,
 	}
 
 	root.AddCommand(setup.NewCommand())
+	root.AddCommand(lint.NewCommand())
 	root.AddCommand(deploy.NewCommand())
 
 	return root

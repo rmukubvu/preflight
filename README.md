@@ -20,6 +20,7 @@ What Preflight solves:
 
 - prove the stack actually works, not just that resources were created
 - validate structure, wiring, IAM, and behavior from the outside
+- flag missing conditions for scalability, reliability, observability, and security before deploy
 - add diagnosis when something fails
 - catch compatibility regressions before cloud deployment
 
@@ -100,6 +101,7 @@ make run-setup
 ```bash
 ./dist/preflight --help
 ./dist/preflight setup --help
+./dist/preflight lint --help
 ./dist/preflight deploy --help
 ```
 
@@ -107,8 +109,21 @@ Main manual workflow:
 
 ```bash
 ./dist/preflight setup
+./dist/preflight lint --stack-name MyStack
 ./dist/preflight deploy --stack-name MyStack --no-ai
 ```
+
+`preflight lint` is the fast static pass. It currently supports CDK stacks by
+synthesizing CloudFormation templates and checking for common readiness gaps
+such as:
+
+- wildcard IAM permissions
+- S3 public access and encryption gaps
+- SQS queues without DLQs
+- DynamoDB tables without PITR or autoscaling posture
+- Lambda functions without explicit log retention
+- API stages without access logging
+- stacks with workload resources but no CloudWatch alarms
 
 ## Two Runtime Modes
 
