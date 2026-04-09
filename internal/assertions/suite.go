@@ -84,7 +84,7 @@ func groupByType(resources []awsclient.StackResource) map[string][]awsclient.Sta
 }
 
 // queueName extracts the queue name from a full SQS queue URL or ARN.
-// Floci PhysicalIDs for SQS can be either format.
+// Emulator CloudFormation PhysicalIDs for SQS can be either format.
 func queueName(physicalID string) string {
 	// URL: http://localhost:4566/000000000000/MyQueue → "MyQueue"
 	// ARN: arn:aws:sqs:us-east-1:000000000000:MyQueue → "MyQueue"

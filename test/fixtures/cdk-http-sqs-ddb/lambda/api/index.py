@@ -1,11 +1,15 @@
 import json
+import os
 import uuid
 
 import boto3
 
-_endpoint = "http://preflight-floci:4566"
+_endpoint = os.environ.get("EMULATOR_ENDPOINT", "http://host.docker.internal:4566")
 _region = "us-east-1"
-_queue_url = "http://preflight-floci:4566/000000000000/cdk-job-queue-fixture"
+_queue_url = os.environ.get(
+    "QUEUE_URL",
+    "http://host.docker.internal:4566/000000000000/cdk-job-queue-fixture",
+)
 _sqs = boto3.client(
     "sqs",
     endpoint_url=_endpoint,

@@ -1,7 +1,8 @@
 import json
+import os
 import boto3
 
-_endpoint = "http://preflight-floci:4566"
+_endpoint = os.environ.get("EMULATOR_ENDPOINT", "http://host.docker.internal:4566")
 _region = "us-east-1"
 _ddb = boto3.resource(
     "dynamodb",
@@ -10,7 +11,7 @@ _ddb = boto3.resource(
     aws_access_key_id="test",
     aws_secret_access_key="test",
 )
-_table = _ddb.Table("cdk-jobs-table-fixture")
+_table = _ddb.Table(os.environ.get("TABLE_NAME", "cdk-jobs-table-fixture"))
 
 
 def handler(event, _context):

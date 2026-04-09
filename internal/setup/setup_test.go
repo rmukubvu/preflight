@@ -46,8 +46,11 @@ func TestHandleGetConfig_ReturnsCurrentConfig(t *testing.T) {
 	if got.LLM.Provider != "auto" {
 		t.Errorf("want provider auto, got %q", got.LLM.Provider)
 	}
-	if got.Floci.Port != 4566 {
-		t.Errorf("want floci port 4566, got %d", got.Floci.Port)
+	if got.Emulator.Type != "stratus" {
+		t.Errorf("want emulator type stratus, got %q", got.Emulator.Type)
+	}
+	if got.Emulator.Port != 4566 {
+		t.Errorf("want emulator port 4566, got %d", got.Emulator.Port)
 	}
 }
 

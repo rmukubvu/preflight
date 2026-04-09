@@ -7,7 +7,8 @@ package config
 type Config struct {
 	Version    int              `yaml:"version"`
 	LLM        LLMConfig        `yaml:"llm"`
-	Floci      FlociConfig      `yaml:"floci"`
+	Emulator   EmulatorConfig   `yaml:"emulator,omitempty"`
+	Floci      FlociConfig      `yaml:"floci,omitempty"`
 	Stack      StackConfig      `yaml:"stack"`
 	Assertions AssertionsConfig `yaml:"assertions,omitempty"`
 }
@@ -49,7 +50,32 @@ type OllamaConfig struct {
 	Model   string `yaml:"model"`
 }
 
-// FlociConfig holds settings for the local AWS emulator container.
+// EmulatorConfig holds settings for the local AWS emulator runtime.
+type EmulatorConfig struct {
+	// Type is one of: stratus, floci, custom.
+	Type string `yaml:"type,omitempty"`
+
+	// Endpoint points at an already-running emulator and disables local startup.
+	Endpoint string `yaml:"endpoint,omitempty"`
+
+	// Command is a space-delimited local command used to start the emulator.
+	Command string `yaml:"command,omitempty"`
+
+	// Image is the Docker image for Docker-backed emulators such as Floci.
+	Image string `yaml:"image,omitempty"`
+
+	// Port is the host port exposed by the emulator.
+	Port int `yaml:"port,omitempty"`
+
+	// DataDir is an optional durable data directory for local runtimes.
+	DataDir string `yaml:"data_dir,omitempty"`
+
+	// HealthPath overrides the default backend health endpoint when needed.
+	HealthPath string `yaml:"health_path,omitempty"`
+}
+
+// FlociConfig holds legacy settings for the Floci local AWS emulator container.
+// It is retained for backward compatibility with older .preflight.yaml files.
 type FlociConfig struct {
 	Image   string `yaml:"image"`
 	Port    int    `yaml:"port"`
@@ -127,4 +153,11 @@ var ValidProviders = map[string]bool{
 var ValidStackTypes = map[string]bool{
 	"cdk":       true,
 	"terraform": true,
+}
+
+// ValidEmulatorTypes is the set of accepted values for EmulatorConfig.Type.
+var ValidEmulatorTypes = map[string]bool{
+	"stratus": true,
+	"floci":   true,
+	"custom":  true,
 }

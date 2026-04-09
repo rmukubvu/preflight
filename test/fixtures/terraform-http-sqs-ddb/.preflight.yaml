@@ -15,8 +15,9 @@ llm:
     base_url: http://localhost:11434
     model: gemma3
 
-floci:
-  image: hectorvent/floci:latest
+emulator:
+  type: stratus
+  command: stratus
   port: 4566
 
 stack:

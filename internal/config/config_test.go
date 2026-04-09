@@ -20,8 +20,11 @@ func TestLoad_FileNotExist_ReturnsDefault(t *testing.T) {
 	if cfg.LLM.Provider != "auto" {
 		t.Errorf("want provider auto, got %q", cfg.LLM.Provider)
 	}
-	if cfg.Floci.Port != 4566 {
-		t.Errorf("want floci port 4566, got %d", cfg.Floci.Port)
+	if cfg.Emulator.Type != "stratus" {
+		t.Errorf("want emulator type stratus, got %q", cfg.Emulator.Type)
+	}
+	if cfg.Emulator.Port != 4566 {
+		t.Errorf("want emulator port 4566, got %d", cfg.Emulator.Port)
 	}
 	if cfg.Version != 1 {
 		t.Errorf("want version 1, got %d", cfg.Version)
@@ -87,6 +90,29 @@ func TestRoundtrip(t *testing.T) {
 	}
 	if got.Assertions.Behavioural.HTTP[0].IntegrationFunction != "JobsHandlerFunction" {
 		t.Errorf("behavioural.http[0].integration_function: want %q, got %q", "JobsHandlerFunction", got.Assertions.Behavioural.HTTP[0].IntegrationFunction)
+	}
+}
+
+func TestLoad_LegacyFlociConfig_MapsToEmulator(t *testing.T) {
+	dir := t.TempDir()
+	legacy := []byte("version: 1\nfloci:\n  image: hectorvent/floci:latest\n  port: 4666\n")
+	if err := os.WriteFile(filepath.Join(dir, config.Filename), legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Emulator.Type != "floci" {
+		t.Fatalf("want emulator type floci, got %q", cfg.Emulator.Type)
+	}
+	if cfg.Emulator.Port != 4666 {
+		t.Fatalf("want emulator port 4666, got %d", cfg.Emulator.Port)
+	}
+	if cfg.Floci.Port != 4666 {
+		t.Fatalf("want legacy floci port preserved in memory, got %d", cfg.Floci.Port)
 	}
 }
 
@@ -221,30 +247,70 @@ func TestValidate(t *testing.T) {
 			wantField: "stack.type",
 		},
 		{
+			name: "default emulator type is valid",
+			mutate: func(c *config.Config) {
+				c.Emulator.Type = "stratus"
+			},
+		},
+		{
+			name: "unknown emulator type is invalid",
+			mutate: func(c *config.Config) {
+				c.Emulator.Type = "mystery"
+			},
+			wantField: "emulator.type",
+		},
+		{
 			name: "cdk stack type is valid",
 			mutate: func(c *config.Config) {
 				c.Stack.Type = "cdk"
 			},
 		},
 		{
-			name: "floci port below 1024 is invalid",
+			name: "emulator port below 1024 is invalid",
 			mutate: func(c *config.Config) {
-				c.Floci.Port = 80
+				c.Emulator.Port = 80
 			},
-			wantField: "floci.port",
+			wantField: "emulator.port",
 		},
 		{
-			name: "floci port above 65535 is invalid",
+			name: "emulator port above 65535 is invalid",
 			mutate: func(c *config.Config) {
-				c.Floci.Port = 70000
+				c.Emulator.Port = 70000
 			},
-			wantField: "floci.port",
+			wantField: "emulator.port",
 		},
 		{
-			name: "floci port 0 is valid (use default)",
+			name: "emulator port 0 is valid (use default)",
 			mutate: func(c *config.Config) {
-				c.Floci.Port = 0
+				c.Emulator.Port = 0
 			},
+		},
+		{
+			name: "stratus without command or endpoint is invalid",
+			mutate: func(c *config.Config) {
+				c.Emulator.Type = "stratus"
+				c.Emulator.Command = ""
+				c.Emulator.Endpoint = ""
+			},
+			wantField: "emulator.command",
+		},
+		{
+			name: "floci without image or endpoint is invalid",
+			mutate: func(c *config.Config) {
+				c.Emulator.Type = "floci"
+				c.Emulator.Image = ""
+				c.Emulator.Endpoint = ""
+			},
+			wantField: "emulator.image",
+		},
+		{
+			name: "custom without endpoint or command is invalid",
+			mutate: func(c *config.Config) {
+				c.Emulator.Type = "custom"
+				c.Emulator.Command = ""
+				c.Emulator.Endpoint = ""
+			},
+			wantField: "emulator.endpoint",
 		},
 		{
 			name: "behavioural http check is valid",

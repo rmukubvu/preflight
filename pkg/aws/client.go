@@ -1,13 +1,13 @@
-// Package aws provides an AWS SDK client pre-configured to target Floci
-// (the local AWS emulator) instead of real AWS. Assertion code is identical
+// Package aws provides an AWS SDK client pre-configured to target a local AWS
+// emulator instead of real AWS. Assertion code is identical
 // for local and real deployments — only the endpoint changes.
 package aws
 
 import "context"
 
 // Client is the interface for AWS operations used by the assertion engine.
-// Every method targets the Floci endpoint at construction time.
-// Using an interface keeps assertions testable without a running Floci instance.
+// Every method targets the configured emulator endpoint at construction time.
+// Using an interface keeps assertions testable without a running emulator instance.
 type Client interface {
 	// ─── CloudFormation ──────────────────────────────────────────────────────
 
@@ -68,11 +68,11 @@ type Client interface {
 	// APIGatewayV2Routes returns all routes in the named HTTP API.
 	APIGatewayV2Routes(ctx context.Context, apiID string) ([]APIRoute, error)
 
-	// APIGatewayV2APIs returns all API Gateway v2 APIs visible in Floci.
+	// APIGatewayV2APIs returns all API Gateway v2 APIs visible in the emulator.
 	APIGatewayV2APIs(ctx context.Context) ([]APIDetail, error)
 
 	// APIGatewayV2InvokeURL returns the HTTP base URL for invoking the API.
-	// Used by behavioural assertions to make real HTTP calls against Floci.
+	// Used by behavioural assertions to make real HTTP calls against the emulator.
 	APIGatewayV2InvokeURL(ctx context.Context, apiID string) (string, error)
 
 	// ─── DynamoDB ─────────────────────────────────────────────────────────────
@@ -86,5 +86,5 @@ type Client interface {
 	DynamoDBGetItem(ctx context.Context, tableName string, key map[string]string) (map[string]string, error)
 }
 
-// FlociEndpoint is the default Floci base URL.
-const FlociEndpoint = "http://localhost:4566"
+// DefaultEndpoint is the default local emulator base URL.
+const DefaultEndpoint = "http://localhost:4566"

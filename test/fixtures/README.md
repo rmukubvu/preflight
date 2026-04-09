@@ -4,8 +4,8 @@ Smoke fixtures for exercising `preflight` against real IaC projects.
   - Full CDK fixture for the POC path:
     API Gateway -> Lambda -> SQS -> Lambda -> DynamoDB.
   - Includes behavioural HTTP and SQS/DynamoDB assertions.
-  - The smoke harness prebuilds Lambda zip files, uploads them to a Floci S3
-    bucket, and deploys the stack against a clean Floci container each run.
+  - The smoke harness prebuilds Lambda zip files, uploads them to the emulator S3
+    bucket, and deploys the stack against a clean local emulator each run.
 
 - `terraform-http-sqs-ddb/`
   - Terraform fixture for the same infrastructure pattern.

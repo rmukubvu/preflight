@@ -25,6 +25,18 @@ func Validate(cfg Config) []ValidationError {
 		errs = append(errs, ValidationError{Field: field, Message: msg})
 	}
 
+	emulatorCfg := cfg.Emulator
+	if !hasExplicitEmulatorConfig(emulatorCfg) && hasLegacyFlociConfig(cfg.Floci) {
+		emulatorCfg = EmulatorConfig{
+			Type:    "floci",
+			Image:   cfg.Floci.Image,
+			Port:    cfg.Floci.Port,
+			DataDir: cfg.Floci.DataDir,
+		}
+	} else if !hasExplicitEmulatorConfig(emulatorCfg) {
+		emulatorCfg = DefaultConfig().Emulator
+	}
+
 	// Provider must be a known value.
 	if !ValidProviders[cfg.LLM.Provider] {
 		add("llm.provider", fmt.Sprintf("must be one of: auto, bedrock, claude, openai, ollama, none; got %q", cfg.LLM.Provider))
@@ -61,9 +73,28 @@ func Validate(cfg Config) []ValidationError {
 		add("stack.type", fmt.Sprintf("must be cdk or terraform; got %q", cfg.Stack.Type))
 	}
 
-	// Floci port must be in the unprivileged range when set.
-	if cfg.Floci.Port != 0 && (cfg.Floci.Port < 1024 || cfg.Floci.Port > 65535) {
-		add("floci.port", fmt.Sprintf("must be between 1024 and 65535; got %d", cfg.Floci.Port))
+	if !ValidEmulatorTypes[emulatorCfg.Type] {
+		add("emulator.type", fmt.Sprintf("must be one of: stratus, floci, custom; got %q", emulatorCfg.Type))
+	}
+
+	// Emulator port must be in the unprivileged range when set.
+	if emulatorCfg.Port != 0 && (emulatorCfg.Port < 1024 || emulatorCfg.Port > 65535) {
+		add("emulator.port", fmt.Sprintf("must be between 1024 and 65535; got %d", emulatorCfg.Port))
+	}
+
+	switch emulatorCfg.Type {
+	case "stratus":
+		if emulatorCfg.Endpoint == "" && strings.TrimSpace(emulatorCfg.Command) == "" {
+			add("emulator.command", "required for stratus when emulator.endpoint is not set")
+		}
+	case "floci":
+		if emulatorCfg.Endpoint == "" && strings.TrimSpace(emulatorCfg.Image) == "" {
+			add("emulator.image", "required for floci when emulator.endpoint is not set")
+		}
+	case "custom":
+		if strings.TrimSpace(emulatorCfg.Endpoint) == "" && strings.TrimSpace(emulatorCfg.Command) == "" {
+			add("emulator.endpoint", "or emulator.command is required when emulator.type is custom")
+		}
 	}
 
 	for i, check := range cfg.Assertions.Behavioural.HTTP {

@@ -401,22 +401,48 @@
         </div>
       </div>
 
-      <!-- ── Floci ── -->
+      <!-- ── Emulator ── -->
       <div class="card">
-        <div class="card-title">Floci — Local AWS Emulator</div>
+        <div class="card-title">AWS Emulator</div>
         <div class="card-desc">
-          Floci is a Quarkus-native AWS emulator. Starts in 24ms, uses 13MB RAM,
-          supports 100% of AWS SDK operations.
+          Choose the local emulator backend. Stratus is the default path; Floci
+          remains available during migration, and custom endpoints are supported.
         </div>
         <div class="field">
-          <label for="floci-image">Docker Image</label>
-          <input type="text" id="floci-image"
+          <label for="emulator-type">Backend</label>
+          <select id="emulator-type">
+            <option value="stratus">Stratus</option>
+            <option value="floci">Floci</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="emulator-endpoint">Endpoint</label>
+          <input type="text" id="emulator-endpoint"
+                 placeholder="http://localhost:4566" />
+          <div class="field-hint">Leave blank to let <code>preflight</code> start the emulator locally.</div>
+        </div>
+        <div class="field">
+          <label for="emulator-command">Command</label>
+          <input type="text" id="emulator-command"
+                 value="stratus" />
+          <div class="field-hint">Used for local process-backed runtimes such as <code>stratus</code>.</div>
+        </div>
+        <div class="field">
+          <label for="emulator-image">Docker Image</label>
+          <input type="text" id="emulator-image"
                  value="hectorvent/floci:latest" />
+          <div class="field-hint">Used for Docker-backed runtimes such as <code>floci</code>.</div>
         </div>
         <div class="field">
-          <label for="floci-port">Port</label>
-          <input type="number" id="floci-port"
+          <label for="emulator-port">Port</label>
+          <input type="number" id="emulator-port"
                  value="4566" min="1024" max="65535" />
+        </div>
+        <div class="field">
+          <label for="emulator-data-dir">Data Directory</label>
+          <input type="text" id="emulator-data-dir"
+                 placeholder="./.stratus-data" />
         </div>
       </div>
 
@@ -552,10 +578,19 @@
           $('ollama-model').value = llm.ollama.model || 'gemma4:e4b';
         }
 
-        // Floci
-        if (cfg.floci) {
-          $('floci-image').value = cfg.floci.image || 'hectorvent/floci:latest';
-          $('floci-port').value = cfg.floci.port || 4566;
+        // Emulator
+        const emulator = cfg.emulator || {};
+        $('emulator-type').value = emulator.type || 'stratus';
+        $('emulator-endpoint').value = emulator.endpoint || '';
+        $('emulator-command').value = emulator.command || 'stratus';
+        $('emulator-image').value = emulator.image || 'hectorvent/floci:latest';
+        $('emulator-port').value = emulator.port || 4566;
+        $('emulator-data-dir').value = emulator.data_dir || '';
+
+        if (!cfg.emulator && cfg.floci) {
+          $('emulator-type').value = 'floci';
+          $('emulator-image').value = cfg.floci.image || 'hectorvent/floci:latest';
+          $('emulator-port').value = cfg.floci.port || 4566;
         }
 
         // Stack
@@ -597,9 +632,13 @@
               model:    $('ollama-model').value.trim(),
             },
           },
-          floci: {
-            image: $('floci-image').value.trim(),
-            port:  parseInt($('floci-port').value, 10) || 4566,
+          emulator: {
+            type: $('emulator-type').value,
+            endpoint: $('emulator-endpoint').value.trim(),
+            command: $('emulator-command').value.trim(),
+            image: $('emulator-image').value.trim(),
+            port: parseInt($('emulator-port').value, 10) || 4566,
+            data_dir: $('emulator-data-dir').value.trim(),
           },
           stack: {
             type: $('stack-type').value,

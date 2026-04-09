@@ -17,7 +17,7 @@ func NewCommand() *cobra.Command {
 		Use:   "setup",
 		Short: "Configure preflight via an interactive browser UI",
 		Long: `Opens a local web interface to configure your LLM provider,
-API keys, Floci settings, and stack type.
+API keys, emulator settings, and stack type.
 
 Saves configuration to .preflight.yaml in the current directory.
 The server shuts down automatically after you click Save.

@@ -1,5 +1,5 @@
 // Package assertions contains the parallel assertion engine and individual
-// infrastructure checks. After a local Floci deployment, the engine runs
+// infrastructure checks. After a local emulator deployment, the engine runs
 // all registered assertions concurrently and aggregates the results.
 package assertions
 
@@ -46,6 +46,6 @@ type Assertion interface {
 	// Category returns the assertion's classification.
 	Category() Category
 
-	// Run executes the check against the Floci-backed AWS client.
+	// Run executes the check against the emulator-backed AWS client.
 	Run(ctx context.Context, client aws.Client) (Result, error)
 }

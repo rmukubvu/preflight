@@ -20,10 +20,10 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-// FlociClient implements Client, pointing all service calls at the Floci
-// local AWS emulator. Credentials are fixed test values because Floci does
-// not enforce authentication.
-type FlociClient struct {
+// EmulatorClient implements Client, pointing all service calls at the local
+// AWS emulator. Credentials are fixed test values because local emulators
+// generally do not enforce authentication.
+type EmulatorClient struct {
 	cfn     *cloudformation.Client
 	lambda  *awslambda.Client
 	sqsSvc  *sqs.Client
@@ -32,15 +32,17 @@ type FlociClient struct {
 	apigw   *apigatewayv2.Client
 	ddb     *dynamodb.Client
 	baseURL string // e.g. "http://localhost:4566" — used to build invoke URLs
+	kind    string
 }
 
-// NewFlociClient constructs a FlociClient targeting baseURL (e.g. "http://localhost:4566").
-func NewFlociClient(baseURL string) (*FlociClient, error) {
+// NewEmulatorClient constructs an EmulatorClient targeting baseURL
+// (e.g. "http://localhost:4566").
+func NewEmulatorClient(baseURL, kind string) (*EmulatorClient, error) {
 	if _, err := url.ParseRequestURI(baseURL); err != nil {
-		return nil, fmt.Errorf("invalid floci base URL %q: %w", baseURL, err)
+		return nil, fmt.Errorf("invalid emulator base URL %q: %w", baseURL, err)
 	}
 
-	// Floci does not enforce authentication; use fixed test credentials.
+	// Local emulators do not enforce authentication; use fixed test credentials.
 	creds := credentials.NewStaticCredentialsProvider("test", "test", "")
 
 	endpoint := aws.EndpointResolverWithOptionsFunc(
@@ -56,10 +58,10 @@ func NewFlociClient(baseURL string) (*FlociClient, error) {
 	base := aws.Config{
 		Region:                      "us-east-1",
 		Credentials:                 creds,
-		EndpointResolverWithOptions: endpoint, //nolint:staticcheck // required for Floci compatibility
+		EndpointResolverWithOptions: endpoint, //nolint:staticcheck // required for emulator compatibility
 	}
 
-	return &FlociClient{
+	return &EmulatorClient{
 		cfn:     cloudformation.NewFromConfig(base),
 		lambda:  awslambda.NewFromConfig(base),
 		sqsSvc:  sqs.NewFromConfig(base),
@@ -68,14 +70,15 @@ func NewFlociClient(baseURL string) (*FlociClient, error) {
 		apigw:   apigatewayv2.NewFromConfig(base),
 		ddb:     dynamodb.NewFromConfig(base),
 		baseURL: baseURL,
+		kind:    kind,
 	}, nil
 }
 
-var _ Client = (*FlociClient)(nil) // compile-time interface check
+var _ Client = (*EmulatorClient)(nil) // compile-time interface check
 
 // ─── CloudFormation ──────────────────────────────────────────────────────────
 
-func (c *FlociClient) CloudFormationStackStatus(ctx context.Context, stackName string) (string, error) {
+func (c *EmulatorClient) CloudFormationStackStatus(ctx context.Context, stackName string) (string, error) {
 	out, err := c.cfn.DescribeStacks(ctx, &cloudformation.DescribeStacksInput{
 		StackName: aws.String(stackName),
 	})
@@ -92,7 +95,7 @@ func (c *FlociClient) CloudFormationStackStatus(ctx context.Context, stackName s
 	return string(out.Stacks[0].StackStatus), nil
 }
 
-func (c *FlociClient) CloudFormationStackResources(ctx context.Context, stackName string) ([]StackResource, error) {
+func (c *EmulatorClient) CloudFormationStackResources(ctx context.Context, stackName string) ([]StackResource, error) {
 	out, err := c.cfn.ListStackResources(ctx, &cloudformation.ListStackResourcesInput{
 		StackName: aws.String(stackName),
 	})
@@ -114,7 +117,7 @@ func (c *FlociClient) CloudFormationStackResources(ctx context.Context, stackNam
 
 // ─── Lambda ───────────────────────────────────────────────────────────────────
 
-func (c *FlociClient) LambdaFunctionExists(ctx context.Context, functionName string) (bool, error) {
+func (c *EmulatorClient) LambdaFunctionExists(ctx context.Context, functionName string) (bool, error) {
 	_, err := c.lambda.GetFunction(ctx, &awslambda.GetFunctionInput{
 		FunctionName: aws.String(functionName),
 	})
@@ -128,7 +131,7 @@ func (c *FlociClient) LambdaFunctionExists(ctx context.Context, functionName str
 	return true, nil
 }
 
-func (c *FlociClient) LambdaFunctionConfig(ctx context.Context, functionName string) (LambdaConfig, error) {
+func (c *EmulatorClient) LambdaFunctionConfig(ctx context.Context, functionName string) (LambdaConfig, error) {
 	out, err := c.lambda.GetFunctionConfiguration(ctx, &awslambda.GetFunctionConfigurationInput{
 		FunctionName: aws.String(functionName),
 	})
@@ -153,7 +156,7 @@ func (c *FlociClient) LambdaFunctionConfig(ctx context.Context, functionName str
 	}, nil
 }
 
-func (c *FlociClient) LambdaEventSourceMappings(ctx context.Context, functionName string) ([]EventSourceMapping, error) {
+func (c *EmulatorClient) LambdaEventSourceMappings(ctx context.Context, functionName string) ([]EventSourceMapping, error) {
 	input := &awslambda.ListEventSourceMappingsInput{}
 	if functionName != "" {
 		input.FunctionName = aws.String(functionName)
@@ -176,7 +179,7 @@ func (c *FlociClient) LambdaEventSourceMappings(ctx context.Context, functionNam
 	return mappings, nil
 }
 
-func (c *FlociClient) LambdaInvoke(ctx context.Context, functionName string, payload []byte) ([]byte, error) {
+func (c *EmulatorClient) LambdaInvoke(ctx context.Context, functionName string, payload []byte) ([]byte, error) {
 	out, err := c.lambda.Invoke(ctx, &awslambda.InvokeInput{
 		FunctionName: aws.String(functionName),
 		Payload:      payload,
@@ -192,7 +195,7 @@ func (c *FlociClient) LambdaInvoke(ctx context.Context, functionName string, pay
 
 // ─── SQS ──────────────────────────────────────────────────────────────────────
 
-func (c *FlociClient) SQSQueueExists(ctx context.Context, queueName string) (bool, error) {
+func (c *EmulatorClient) SQSQueueExists(ctx context.Context, queueName string) (bool, error) {
 	_, err := c.sqsSvc.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
 		QueueName: aws.String(queueName),
 	})
@@ -206,7 +209,7 @@ func (c *FlociClient) SQSQueueExists(ctx context.Context, queueName string) (boo
 	return true, nil
 }
 
-func (c *FlociClient) SQSQueueURL(ctx context.Context, queueName string) (string, error) {
+func (c *EmulatorClient) SQSQueueURL(ctx context.Context, queueName string) (string, error) {
 	out, err := c.sqsSvc.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
 		QueueName: aws.String(queueName),
 	})
@@ -216,7 +219,7 @@ func (c *FlociClient) SQSQueueURL(ctx context.Context, queueName string) (string
 	return aws.ToString(out.QueueUrl), nil
 }
 
-func (c *FlociClient) SQSSendMessage(ctx context.Context, queueURL, body string) error {
+func (c *EmulatorClient) SQSSendMessage(ctx context.Context, queueURL, body string) error {
 	_, err := c.sqsSvc.SendMessage(ctx, &sqs.SendMessageInput{
 		QueueUrl:    aws.String(queueURL),
 		MessageBody: aws.String(body),
@@ -229,7 +232,7 @@ func (c *FlociClient) SQSSendMessage(ctx context.Context, queueURL, body string)
 
 // ─── S3 ───────────────────────────────────────────────────────────────────────
 
-func (c *FlociClient) S3BucketExists(ctx context.Context, bucket string) (bool, error) {
+func (c *EmulatorClient) S3BucketExists(ctx context.Context, bucket string) (bool, error) {
 	_, err := c.s3Svc.HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: aws.String(bucket),
 	})
@@ -243,7 +246,7 @@ func (c *FlociClient) S3BucketExists(ctx context.Context, bucket string) (bool, 
 	return true, nil
 }
 
-func (c *FlociClient) S3BucketNotificationTargets(ctx context.Context, bucket string) ([]S3Notification, error) {
+func (c *EmulatorClient) S3BucketNotificationTargets(ctx context.Context, bucket string) ([]S3Notification, error) {
 	out, err := c.s3Svc.GetBucketNotificationConfiguration(ctx, &s3.GetBucketNotificationConfigurationInput{
 		Bucket: aws.String(bucket),
 	})
@@ -280,7 +283,7 @@ func (c *FlociClient) S3BucketNotificationTargets(ctx context.Context, bucket st
 
 // ─── IAM ──────────────────────────────────────────────────────────────────────
 
-func (c *FlociClient) IAMRoleExists(ctx context.Context, roleName string) (bool, error) {
+func (c *EmulatorClient) IAMRoleExists(ctx context.Context, roleName string) (bool, error) {
 	_, err := c.iamSvc.GetRole(ctx, &iam.GetRoleInput{
 		RoleName: aws.String(roleName),
 	})
@@ -296,7 +299,7 @@ func (c *FlociClient) IAMRoleExists(ctx context.Context, roleName string) (bool,
 
 // IAMRolePolicies collects all policy statements for the role:
 // inline policies (GetRolePolicy) + attached managed policies (GetPolicy + GetPolicyVersion).
-func (c *FlociClient) IAMRolePolicies(ctx context.Context, roleName string) ([]PolicyStatement, error) {
+func (c *EmulatorClient) IAMRolePolicies(ctx context.Context, roleName string) ([]PolicyStatement, error) {
 	var stmts []PolicyStatement
 
 	// Inline policies
@@ -386,7 +389,7 @@ func unmarshalStringOrSlice(raw json.RawMessage) []string {
 
 // ─── API Gateway V2 ───────────────────────────────────────────────────────────
 
-func (c *FlociClient) APIGatewayV2Routes(ctx context.Context, apiID string) ([]APIRoute, error) {
+func (c *EmulatorClient) APIGatewayV2Routes(ctx context.Context, apiID string) ([]APIRoute, error) {
 	out, err := c.apigw.GetRoutes(ctx, &apigatewayv2.GetRoutesInput{
 		ApiId: aws.String(apiID),
 	})
@@ -405,7 +408,7 @@ func (c *FlociClient) APIGatewayV2Routes(ctx context.Context, apiID string) ([]A
 	return routes, nil
 }
 
-func (c *FlociClient) APIGatewayV2APIs(ctx context.Context) ([]APIDetail, error) {
+func (c *EmulatorClient) APIGatewayV2APIs(ctx context.Context) ([]APIDetail, error) {
 	out, err := c.apigw.GetApis(ctx, &apigatewayv2.GetApisInput{})
 	if err != nil {
 		return nil, fmt.Errorf("getting API Gateway APIs: %w", err)
@@ -424,9 +427,10 @@ func (c *FlociClient) APIGatewayV2APIs(ctx context.Context) ([]APIDetail, error)
 	return apis, nil
 }
 
-// APIGatewayV2InvokeURL returns the Floci invoke URL for the API.
-// Floci uses the pattern: {baseURL}/restapis/{apiID}/test/_user_request_/
-func (c *FlociClient) APIGatewayV2InvokeURL(ctx context.Context, apiID string) (string, error) {
+// APIGatewayV2InvokeURL returns the invoke URL for the API. When the emulator
+// does not report an explicit API endpoint, it falls back to the backend's
+// local execute-api convention.
+func (c *EmulatorClient) APIGatewayV2InvokeURL(ctx context.Context, apiID string) (string, error) {
 	apis, err := c.APIGatewayV2APIs(ctx)
 	if err == nil {
 		if invokeURL := apiGatewayV2InvokeURLFromDetails(apis, apiID); invokeURL != "" {
@@ -434,7 +438,12 @@ func (c *FlociClient) APIGatewayV2InvokeURL(ctx context.Context, apiID string) (
 		}
 	}
 
-	return fmt.Sprintf("%s/restapis/%s/test/_user_request_", c.baseURL, apiID), nil
+	switch c.kind {
+	case "stratus":
+		return fmt.Sprintf("%s/_aws/execute-api/%s", c.baseURL, apiID), nil
+	default:
+		return fmt.Sprintf("%s/restapis/%s/test/_user_request_", c.baseURL, apiID), nil
+	}
 }
 
 func apiGatewayV2InvokeURLFromDetails(apis []APIDetail, ref string) string {
@@ -448,7 +457,7 @@ func apiGatewayV2InvokeURLFromDetails(apis []APIDetail, ref string) string {
 
 // ─── DynamoDB ─────────────────────────────────────────────────────────────────
 
-func (c *FlociClient) DynamoDBTableExists(ctx context.Context, tableName string) (bool, error) {
+func (c *EmulatorClient) DynamoDBTableExists(ctx context.Context, tableName string) (bool, error) {
 	_, err := c.ddb.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	})
@@ -462,7 +471,7 @@ func (c *FlociClient) DynamoDBTableExists(ctx context.Context, tableName string)
 	return true, nil
 }
 
-func (c *FlociClient) DynamoDBGetItem(ctx context.Context, tableName string, key map[string]string) (map[string]string, error) {
+func (c *EmulatorClient) DynamoDBGetItem(ctx context.Context, tableName string, key map[string]string) (map[string]string, error) {
 	ddbKey := make(map[string]ddbtypes.AttributeValue, len(key))
 	for k, v := range key {
 		ddbKey[k] = &ddbtypes.AttributeValueMemberS{Value: v}

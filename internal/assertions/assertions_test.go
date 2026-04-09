@@ -383,7 +383,7 @@ func TestAPIGatewayHTTPCheck_Fail_WhenStatusMismatches(t *testing.T) {
 	assertFailed(t, result)
 }
 
-func TestAPIGatewayHTTPCheck_FallsBackToIntegrationLambdaOnFlociInvokeFailure(t *testing.T) {
+func TestAPIGatewayHTTPCheck_FallsBackToIntegrationLambdaOnInvokeURLFailure(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusBadRequest,

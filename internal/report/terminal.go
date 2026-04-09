@@ -78,7 +78,7 @@ func PrintDiagnosis(w io.Writer, dr diagnosis.DiagnoseResponse) {
 	}
 }
 
-// PrintStep writes a named step with its elapsed time (e.g. "◆ Starting Floci... 24ms").
+// PrintStep writes a named step with its elapsed time (e.g. "◆ Starting Stratus... 24ms").
 func PrintStep(w io.Writer, name, detail string) {
 	if detail != "" {
 		fmt.Fprintf(w, "  %s %s %s\n",

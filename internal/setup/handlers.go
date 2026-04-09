@@ -33,6 +33,7 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"errors": errs})
 		return
 	}
+	incoming = config.Normalize(incoming)
 
 	if err := config.Save(s.cfg.WorkDir, incoming); err != nil {
 		http.Error(w, fmt.Sprintf("saving config: %v", err), http.StatusInternalServerError)

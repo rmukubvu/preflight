@@ -12,7 +12,7 @@ import (
 	"github.com/rmukubvu/preflight/internal/assertions"
 	"github.com/rmukubvu/preflight/internal/config"
 	"github.com/rmukubvu/preflight/internal/diagnosis"
-	"github.com/rmukubvu/preflight/internal/floci"
+	"github.com/rmukubvu/preflight/internal/emulator"
 	"github.com/rmukubvu/preflight/internal/report"
 	awsclient "github.com/rmukubvu/preflight/pkg/aws"
 )
@@ -29,8 +29,8 @@ func NewCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "deploy",
-		Short: "Deploy your stack to Floci and run assertions",
-		Long: `Deploys your CDK or Terraform stack to the Floci local AWS emulator,
+		Short: "Deploy your stack to a local AWS emulator and run assertions",
+		Long: `Deploys your CDK or Terraform stack to the configured local AWS emulator,
 then runs structural, wiring, IAM, and behavioural assertions to validate
 your infrastructure before it touches real AWS.
 
@@ -46,6 +46,7 @@ Exit code 1: one or more assertions failed.`,
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
+			cfg = config.Normalize(cfg)
 
 			if stackDir == "" {
 				stackDir = workDir
@@ -104,24 +105,27 @@ func runDeploy(ctx context.Context, rc runConfig) error {
 	// ── Detect stack type ──────────────────────────────────────────────────
 	fmt.Fprintf(w, "  %s %s detected\n", stylePassText("✓"), rc.stackType)
 
-	// ── Start Floci ────────────────────────────────────────────────────────
-	flociMgr := floci.NewManager(rc.cfg.Floci.Image, rc.cfg.Floci.Port)
+	// ── Start emulator ─────────────────────────────────────────────────────
+	emulatorMgr := emulator.NewManager(rc.cfg.Emulator)
 
-	report.PrintStep(w, "Starting Floci (local AWS)...", "")
-	flociStart := time.Now()
-	elapsed, err := flociMgr.EnsureRunning(ctx)
+	report.PrintStep(w, fmt.Sprintf("Starting %s (local AWS)...", emulatorMgr.DisplayName()), "")
+	elapsed, err := emulatorMgr.EnsureRunning(ctx)
 	if err != nil {
-		return fmt.Errorf("starting Floci: %w", err)
+		return fmt.Errorf("starting %s: %w", emulatorMgr.DisplayName(), err)
 	}
 	if elapsed == 0 {
-		fmt.Fprintf(w, "  %s Floci already running\n", stylePassText("✓"))
+		fmt.Fprintf(w, "  %s %s already running\n", stylePassText("✓"), emulatorMgr.DisplayName())
 	} else {
 		fmt.Fprintf(w, "    %s\n", styleMutedText(elapsed.Round(time.Millisecond).String()))
 	}
-	_ = flociStart
+	if emulatorMgr.StopOnExit() {
+		defer func() {
+			_ = emulatorMgr.Stop(context.Background())
+		}()
+	}
 
 	// ── Deploy ─────────────────────────────────────────────────────────────
-	runner := buildRunner(rc, flociMgr.Endpoint())
+	runner := buildRunner(rc, emulatorMgr.Endpoint())
 
 	stepName := fmt.Sprintf("Deploying %s stack...", rc.stackType)
 	report.PrintStep(w, stepName, "")
@@ -136,7 +140,7 @@ func runDeploy(ctx context.Context, rc runConfig) error {
 	report.PrintStep(w, "Running assertion suite (parallel)...", "")
 	fmt.Fprintln(w)
 
-	awsClient, err := awsclient.NewFlociClient(flociMgr.Endpoint())
+	awsClient, err := awsclient.NewEmulatorClient(emulatorMgr.Endpoint(), rc.cfg.Emulator.Type)
 	if err != nil {
 		return fmt.Errorf("creating AWS client: %w", err)
 	}

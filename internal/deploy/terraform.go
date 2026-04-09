@@ -9,35 +9,35 @@ import (
 	"strings"
 )
 
-// TerraformRunner deploys a Terraform module to Floci by overriding the
+// TerraformRunner deploys a Terraform module to the local emulator by overriding the
 // AWS provider endpoint via environment variables.
 type TerraformRunner struct {
-	dir           string
-	stackName     string
-	flociEndpoint string
+	dir              string
+	stackName        string
+	emulatorEndpoint string
 }
 
 // NewTerraformRunner constructs a TerraformRunner.
 // stackName is used for display purposes only (Terraform doesn't have stack names).
-func NewTerraformRunner(dir, stackName, flociEndpoint string) *TerraformRunner {
+func NewTerraformRunner(dir, stackName, emulatorEndpoint string) *TerraformRunner {
 	return &TerraformRunner{
-		dir:           dir,
-		stackName:     stackName,
-		flociEndpoint: flociEndpoint,
+		dir:              dir,
+		stackName:        stackName,
+		emulatorEndpoint: emulatorEndpoint,
 	}
 }
 
 func (r *TerraformRunner) StackName() string { return r.stackName }
 
 // Deploy runs `terraform init` (if needed) then `terraform apply -auto-approve`
-// with Floci endpoint overrides.
+// with emulator endpoint overrides.
 func (r *TerraformRunner) Deploy(ctx context.Context) error {
 	tfBin, err := findTerraform()
 	if err != nil {
 		return err
 	}
 
-	env := append(os.Environ(), flociEnv(r.flociEndpoint)...)
+	env := append(os.Environ(), emulatorEnv(r.emulatorEndpoint)...)
 	env = append(env,
 		"TF_INPUT=0",
 		"TF_PLUGIN_TIMEOUT=2m",
