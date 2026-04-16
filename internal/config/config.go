@@ -84,7 +84,7 @@ type FlociConfig struct {
 
 // StackConfig identifies the IaC project being validated.
 type StackConfig struct {
-	// Type is "cdk" or "terraform".
+	// Type is "cdk", "pulumi", or "terraform".
 	Type   string `yaml:"type,omitempty"`
 	Dir    string `yaml:"dir,omitempty"`
 	CDKApp string `yaml:"cdk_app,omitempty"` // e.g. "npx cdk"
@@ -152,6 +152,7 @@ var ValidProviders = map[string]bool{
 // ValidStackTypes is the set of accepted values for StackConfig.Type.
 var ValidStackTypes = map[string]bool{
 	"cdk":       true,
+	"pulumi":    true,
 	"terraform": true,
 }
 

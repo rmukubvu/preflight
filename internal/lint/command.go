@@ -89,7 +89,7 @@ deploy anything to AWS.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&stackType, "stack-type", "", "Stack type: cdk or terraform (default: auto-detect)")
+	cmd.Flags().StringVar(&stackType, "stack-type", "", "Stack type: cdk, pulumi, or terraform (default: auto-detect)")
 	cmd.Flags().StringVar(&stackDir, "dir", "", "Stack directory (default: current directory)")
 	cmd.Flags().StringVar(&stackName, "stack-name", "", "CloudFormation stack name to synthesize")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on warnings as well as errors")
@@ -133,6 +133,8 @@ func Run(ctx context.Context, w io.Writer, opts Options) (Result, error) {
 	switch opts.StackType {
 	case stack.TypeCDK:
 		result, err = runCDK(ctx, w, opts)
+	case stack.TypePulumi:
+		return Result{}, fmt.Errorf("static lint does not support Pulumi yet; use preflight deploy --skip-lint for Pulumi stacks")
 	case stack.TypeTerraform:
 		result, err = runTerraform(w, opts)
 	default:

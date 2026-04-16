@@ -120,6 +120,47 @@ func TestBuildConfiguredBehaviouralAssertions_ResolvesAPIsByGeneratedLogicalIDAn
 	assertContainsAssertionName(t, suite, "apigw-http:POST real-api-id/jobs")
 }
 
+func TestBuildAssertionSuite_PulumiSkipsCloudFormationDiscovery(t *testing.T) {
+	client := &awsclient.MockClient{
+		CloudFormationStackResourcesFn: func(_ context.Context, _ string) ([]awsclient.StackResource, error) {
+			t.Fatal("CloudFormationStackResources should not be called for pulumi stacks")
+			return nil, nil
+		},
+		APIGatewayV2APIsFn: func(_ context.Context) ([]awsclient.APIDetail, error) {
+			return []awsclient.APIDetail{
+				{APIID: "api-123", Name: "pulumi-csharp-http-api"},
+			}, nil
+		},
+	}
+
+	rc := runConfig{
+		stackType: StackTypePulumi,
+		stackName: "preflight",
+		cfg: config.Config{
+			Assertions: config.AssertionsConfig{
+				Behavioural: config.BehaviouralConfig{
+					HTTP: []config.HTTPCheckConfig{
+						{
+							API:                 "pulumi-csharp-http-api",
+							IntegrationFunction: "pulumi-csharp-items-handler",
+							Method:              "post",
+							Path:                "items",
+							ExpectedStatus:      202,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	suite, err := buildAssertionSuite(context.Background(), client, rc)
+	if err != nil {
+		t.Fatalf("buildAssertionSuite: %v", err)
+	}
+
+	assertContainsAssertionName(t, suite, "apigw-http:POST api-123/items")
+}
+
 func assertContainsAssertionName(t *testing.T, suite []assertions.Assertion, want string) {
 	t.Helper()
 	for _, assertion := range suite {

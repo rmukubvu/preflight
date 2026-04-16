@@ -23,6 +23,7 @@ type StackType = stack.Type
 
 const (
 	StackTypeCDK       = stack.TypeCDK
+	StackTypePulumi    = stack.TypePulumi
 	StackTypeTerraform = stack.TypeTerraform
 	StackTypeUnknown   = stack.TypeUnknown
 )

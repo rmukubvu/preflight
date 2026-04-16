@@ -1,7 +1,7 @@
 # preflight
 
-Validate CDK and Terraform stacks against a local AWS emulator before deploying
-to AWS.
+Validate CDK, Pulumi, and Terraform stacks against a local AWS emulator before
+deploying to AWS.
 
 Stratus emulates your AWS stack locally. Preflight verifies that it actually
 works before you deploy.
@@ -48,6 +48,7 @@ What is true today:
 - `preflight lint` runs a fast static readiness pass for CDK and Terraform stacks
 - `preflight load` can generate and run k6-backed HTTP load scenarios from behavioural assertions
 - `preflight deploy` runs static lint first, then deploys into the configured emulator
+- `preflight deploy` supports CDK, Pulumi, and Terraform stacks
 - the direct CLI deploy path can target `stratus`, `floci`, or a custom endpoint
 - the smoke harness can run against `stratus` or `floci`
 - the smoke harness defaults to `stratus`
@@ -69,11 +70,23 @@ That matters because the claim is not just that a stack synthesizes or creates
 resources. The claim is that the same local stack is exercised through real
 client tooling and an external validator before AWS.
 
+There is also a validated Pulumi path:
+
+1. a Pulumi C# fixture deploys API Gateway v2 and Lambda into `stratus`
+2. `preflight deploy --stack-type pulumi --skip-lint` validates the live HTTP path
+
+Current Pulumi boundary:
+
+- the fixture is C# infrastructure, not a C# Lambda runtime example
+- the Lambda in this fixture is `nodejs20.x`
+- static readiness lint does not support Pulumi yet, so `--skip-lint` is the correct path for now
+
 ## What You Need
 
 - Go `1.23+`
 - Docker Desktop or a working Docker daemon
 - A CDK app that can already synthesize locally, or a Terraform/OpenTofu module
+- Pulumi CLI and .NET if you want to run the Pulumi C# fixture
 - Node.js and npm for JavaScript/TypeScript CDK projects
 - AWS CLI for smoke fixture seeding
 - The AWS CDK CLI available either:
@@ -129,6 +142,9 @@ Main manual workflow:
 
 - CDK by synthesizing CloudFormation templates
 - Terraform by parsing HCL directly
+
+Pulumi is supported today in `preflight deploy` and the smoke harness, but not
+yet in `preflight lint`.
 
 It checks for common readiness gaps such as:
 
@@ -197,6 +213,21 @@ preflight lint
   RISK  scalability    This category is being pulled down by Lambda function does not set an explicit concurrency posture and API stage does not configure throttling or rate-limit settings.
         next: Set ReservedConcurrentExecutions explicitly or document why unbounded account concurrency is acceptable.
 ```
+
+### Example: pulumi
+
+Run the validated Pulumi C# fixture against `stratus`:
+
+```bash
+cd test/fixtures/pulumi-csharp-httpapi-dynamodb
+../../../dist/preflight deploy --stack-type pulumi --stack-name preflight --skip-lint --no-ai
+```
+
+That path is intentionally `--skip-lint` today because:
+
+- Pulumi deploy is supported
+- Pulumi behavioural validation is supported
+- Pulumi static readiness lint is not supported yet
 
 ### Example: diagnosis
 

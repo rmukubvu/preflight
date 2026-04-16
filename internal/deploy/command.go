@@ -87,7 +87,7 @@ Exit code 1: one or more assertions failed.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&stackType, "stack-type", "", "Stack type: cdk or terraform (default: auto-detect)")
+	cmd.Flags().StringVar(&stackType, "stack-type", "", "Stack type: cdk, pulumi, or terraform (default: auto-detect)")
 	cmd.Flags().StringVar(&stackDir, "dir", "", "Stack directory (default: current directory)")
 	cmd.Flags().StringVar(&stackName, "stack-name", "", "CloudFormation stack name for assertions")
 	cmd.Flags().StringVar(&reportFile, "report", "", "Write JSON report to file")
@@ -243,6 +243,8 @@ func buildRunner(rc runConfig, endpoint string) Runner {
 	switch rc.stackType {
 	case StackTypeCDK:
 		return NewCDKRunner(rc.stackDir, rc.stackName, endpoint, rc.cfg.Stack.CDKApp)
+	case StackTypePulumi:
+		return NewPulumiRunner(rc.stackDir, rc.stackName, endpoint)
 	case StackTypeTerraform:
 		return NewTerraformRunner(rc.stackDir, rc.stackName, endpoint)
 	default:
@@ -258,7 +260,7 @@ func buildAssertionSuite(ctx context.Context, client awsclient.Client, rc runCon
 		apis      []awsclient.APIDetail
 	)
 
-	if rc.stackName != "" {
+	if rc.stackName != "" && rc.stackType != StackTypePulumi {
 		var err error
 		resources, err = client.CloudFormationStackResources(ctx, rc.stackName)
 		if err != nil {

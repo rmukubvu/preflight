@@ -10,15 +10,17 @@ import (
 
 	"github.com/rmukubvu/preflight/internal/assertions"
 	"github.com/rmukubvu/preflight/internal/config"
+	"github.com/rmukubvu/preflight/internal/stack"
 	awsclient "github.com/rmukubvu/preflight/pkg/aws"
 )
 
 type fakeClient struct {
-	invokeURL  string
-	resources  []awsclient.StackResource
-	apis       []awsclient.APIDetail
-	lambdaResp []byte
-	lambdaErr  error
+	invokeURL    string
+	resources    []awsclient.StackResource
+	resourcesErr error
+	apis         []awsclient.APIDetail
+	lambdaResp   []byte
+	lambdaErr    error
 }
 
 func (f fakeClient) CloudFormationStackStatus(context.Context, string) (string, error) {
@@ -26,7 +28,7 @@ func (f fakeClient) CloudFormationStackStatus(context.Context, string) (string, 
 }
 
 func (f fakeClient) CloudFormationStackResources(context.Context, string) ([]awsclient.StackResource, error) {
-	return f.resources, nil
+	return f.resources, f.resourcesErr
 }
 
 func (f fakeClient) LambdaFunctionExists(context.Context, string) (bool, error) {
@@ -179,6 +181,48 @@ func TestBuildHTTPScenariosResolvesURLs(t *testing.T) {
 	}
 	if got := scenarios[0].URL; got != "http://127.0.0.1:4566/_aws/execute-api/api-123/jobs" {
 		t.Fatalf("unexpected scenario url %q", got)
+	}
+}
+
+func TestBuildHTTPChecksPulumiSkipsCloudFormationDiscovery(t *testing.T) {
+	t.Parallel()
+
+	client := fakeClient{
+		resourcesErr: context.Canceled,
+		apis: []awsclient.APIDetail{
+			{APIID: "api-123", Name: "pulumi-csharp-http-api"},
+		},
+	}
+
+	opts := Options{
+		StackType: stack.TypePulumi,
+		StackName: "preflight",
+		Config: config.Config{
+			Assertions: config.AssertionsConfig{
+				Behavioural: config.BehaviouralConfig{
+					HTTP: []config.HTTPCheckConfig{
+						{
+							API:                 "pulumi-csharp-http-api",
+							IntegrationFunction: "pulumi-csharp-items-handler",
+							Method:              "post",
+							Path:                "/items",
+							ExpectedStatus:      http.StatusAccepted,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	checks, err := buildHTTPChecks(context.Background(), client, opts)
+	if err != nil {
+		t.Fatalf("buildHTTPChecks returned error: %v", err)
+	}
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(checks))
+	}
+	if got := checks[0].Name(); got != "apigw-http:POST api-123/items" {
+		t.Fatalf("unexpected check name %q", got)
 	}
 }
 

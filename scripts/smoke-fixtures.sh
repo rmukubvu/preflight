@@ -213,6 +213,38 @@ run_terraform_fixture() {
   )
 }
 
+run_pulumi_fixture() {
+  local fixture_dir="$ROOT_DIR/test/fixtures/pulumi-csharp-httpapi-dynamodb"
+  local lambda_dir="$fixture_dir/lambda"
+  local lambda_zip="$lambda_dir/function.zip"
+
+  if ! command -v pulumi >/dev/null 2>&1; then
+    echo "pulumi fixture skipped: pulumi not installed" >&2
+    return 0
+  fi
+  if ! command -v dotnet >/dev/null 2>&1; then
+    echo "pulumi fixture skipped: dotnet not installed" >&2
+    return 0
+  fi
+
+  start_emulator
+  rm -rf "$fixture_dir/bin" "$fixture_dir/obj" "$fixture_dir/.pulumi" "$fixture_dir/.pulumi-state"
+  rm -f "$lambda_zip"
+  (
+    cd "$lambda_dir"
+    zip -q function.zip index.js
+  )
+  (
+    cd "$fixture_dir"
+    PREFLIGHT_EMULATOR_TYPE="$EMULATOR_TYPE" \
+    PREFLIGHT_EMULATOR_COMMAND="$EMULATOR_COMMAND" \
+    PREFLIGHT_EMULATOR_ENDPOINT="$EMULATOR_ENDPOINT" \
+    PREFLIGHT_EMULATOR_PORT="${EMULATOR_PORT:-}" \
+    LAMBDA_ZIP_PATH="$lambda_zip" \
+    "$PREFLIGHT_BIN" deploy --stack-type pulumi --stack-name preflight --skip-lint --no-ai
+  )
+}
+
 cleanup() {
   reset_emulator
   rm -rf "$ROOT_DIR/.gocache"
@@ -229,12 +261,16 @@ case "$TARGET" in
   terraform)
     run_terraform_fixture
     ;;
+  pulumi)
+    run_pulumi_fixture
+    ;;
   all)
     run_cdk_fixture
     run_terraform_fixture
+    run_pulumi_fixture
     ;;
   *)
-    echo "usage: $0 [cdk|terraform|all]" >&2
+    echo "usage: $0 [cdk|terraform|pulumi|all]" >&2
     exit 2
     ;;
 esac

@@ -15,10 +15,19 @@ Smoke fixtures for exercising `preflight` against real IaC projects.
     Terraform-created API Gateway by logical name because the current runtime
     only resolves API refs through CloudFormation resources.
 
+- `pulumi-csharp-httpapi-dynamodb/`
+  - Pulumi fixture written in C#.
+  - Deploys `API Gateway -> Lambda` against Stratus.
+  - Uses explicit deployed resource names, so `preflight deploy --skip-lint`
+    can run behavioural assertions without CloudFormation resource discovery.
+  - The Lambda runtime is `nodejs20.x`; C# Lambda execution is a separate
+    runtime tranche and is not part of this fixture.
+
 Run the smoke harness from the repo root:
 
 ```bash
 ./scripts/smoke-fixtures.sh cdk
 ./scripts/smoke-fixtures.sh terraform
+./scripts/smoke-fixtures.sh pulumi
 ./scripts/smoke-fixtures.sh all
 ```

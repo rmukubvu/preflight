@@ -30,6 +30,17 @@ func TestDetectTerraform(t *testing.T) {
 	}
 }
 
+func TestDetectPulumi(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Pulumi.yaml"), []byte("name: demo\nruntime: dotnet\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := stack.Detect(dir); got != stack.TypePulumi {
+		t.Fatalf("Detect() = %q, want %q", got, stack.TypePulumi)
+	}
+}
+
 func TestDetectUnknownWhenEmpty(t *testing.T) {
 	if got := stack.Detect(t.TempDir()); got != stack.TypeUnknown {
 		t.Fatalf("Detect() = %q, want unknown", got)

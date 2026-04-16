@@ -1,0 +1,4 @@
+name: pulumi-csharp-httpapi-dynamodb
+runtime: dotnet
+description: Pulumi C# fixture for Stratus and Preflight
+

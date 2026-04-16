@@ -13,3 +13,7 @@ func runCDKDeploy(ctx context.Context, dir, stackName, endpoint, cdkApp string) 
 func runTerraformDeploy(ctx context.Context, dir, stackName, endpoint string) error {
 	return deploy.NewTerraformRunner(dir, stackName, endpoint).Deploy(ctx)
 }
+
+func runPulumiDeploy(ctx context.Context, dir, stackName, endpoint string) error {
+	return deploy.NewPulumiRunner(dir, stackName, endpoint).Deploy(ctx)
+}

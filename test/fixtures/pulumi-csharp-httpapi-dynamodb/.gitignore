@@ -1,0 +1,6 @@
+bin/
+obj/
+.pulumi/
+.pulumi-state/
+lambda/function.zip
+Pulumi.*.yaml

@@ -70,7 +70,7 @@ func Validate(cfg Config) []ValidationError {
 
 	// Stack type must be a known value when set.
 	if cfg.Stack.Type != "" && !ValidStackTypes[cfg.Stack.Type] {
-		add("stack.type", fmt.Sprintf("must be cdk or terraform; got %q", cfg.Stack.Type))
+		add("stack.type", fmt.Sprintf("must be cdk, pulumi, or terraform; got %q", cfg.Stack.Type))
 	}
 
 	if !ValidEmulatorTypes[emulatorCfg.Type] {

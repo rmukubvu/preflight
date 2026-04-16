@@ -240,11 +240,10 @@ func TestValidate(t *testing.T) {
 			wantField: "llm.ollama.model",
 		},
 		{
-			name: "unknown stack type is invalid",
+			name: "pulumi stack type is valid",
 			mutate: func(c *config.Config) {
 				c.Stack.Type = "pulumi"
 			},
-			wantField: "stack.type",
 		},
 		{
 			name: "default emulator type is valid",

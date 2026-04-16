@@ -89,7 +89,7 @@ and failure hotspots before AWS deployment.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&stackType, "stack-type", "", "Stack type: cdk or terraform (default: auto-detect)")
+	cmd.Flags().StringVar(&stackType, "stack-type", "", "Stack type: cdk, pulumi, or terraform (default: auto-detect)")
 	cmd.Flags().StringVar(&stackDir, "dir", "", "Stack directory (default: current directory)")
 	cmd.Flags().StringVar(&stackName, "stack-name", "", "Stack name used for resource resolution")
 	cmd.Flags().IntVar(&vus, "vus", 4, "Concurrent virtual users")
@@ -262,6 +262,8 @@ func deployStack(ctx context.Context, opts Options, endpoint string) error {
 	switch opts.StackType {
 	case stack.TypeCDK:
 		return newCDKRunner(opts.StackDir, opts.StackName, endpoint, opts.Config.Stack.CDKApp).Deploy(ctx)
+	case stack.TypePulumi:
+		return newPulumiRunner(opts.StackDir, opts.StackName, endpoint).Deploy(ctx)
 	case stack.TypeTerraform:
 		return newTerraformRunner(opts.StackDir, opts.StackName, endpoint).Deploy(ctx)
 	default:
@@ -277,6 +279,9 @@ func newCDKRunner(dir, stackName, endpoint, cdkApp string) runner {
 func newTerraformRunner(dir, stackName, endpoint string) runner {
 	return terraformRunnerFactory(dir, stackName, endpoint)
 }
+func newPulumiRunner(dir, stackName, endpoint string) runner {
+	return pulumiRunnerFactory(dir, stackName, endpoint)
+}
 
 var (
 	cdkRunnerFactory = func(dir, stackName, endpoint, cdkApp string) runner {
@@ -285,10 +290,14 @@ var (
 	terraformRunnerFactory = func(dir, stackName, endpoint string) runner {
 		return &terraformRunner{dir: dir, stackName: stackName, endpoint: endpoint}
 	}
+	pulumiRunnerFactory = func(dir, stackName, endpoint string) runner {
+		return &pulumiRunner{dir: dir, stackName: stackName, endpoint: endpoint}
+	}
 )
 
 type cdkRunner struct{ dir, stackName, endpoint, cdkApp string }
 type terraformRunner struct{ dir, stackName, endpoint string }
+type pulumiRunner struct{ dir, stackName, endpoint string }
 
 func (r *cdkRunner) Deploy(ctx context.Context) error {
 	return runCDKDeploy(ctx, r.dir, r.stackName, r.endpoint, r.cdkApp)
@@ -296,11 +305,14 @@ func (r *cdkRunner) Deploy(ctx context.Context) error {
 func (r *terraformRunner) Deploy(ctx context.Context) error {
 	return runTerraformDeploy(ctx, r.dir, r.stackName, r.endpoint)
 }
+func (r *pulumiRunner) Deploy(ctx context.Context) error {
+	return runPulumiDeploy(ctx, r.dir, r.stackName, r.endpoint)
+}
 
 func buildHTTPChecks(ctx context.Context, client awsclient.Client, opts Options) ([]*assertions.APIGatewayHTTPCheck, error) {
 	var resources []awsclient.StackResource
 	var apis []awsclient.APIDetail
-	if opts.StackName != "" {
+	if opts.StackName != "" && opts.StackType != stack.TypePulumi {
 		var err error
 		resources, err = client.CloudFormationStackResources(ctx, opts.StackName)
 		if err != nil {
@@ -333,7 +345,7 @@ func buildHTTPChecks(ctx context.Context, client awsclient.Client, opts Options)
 func buildHTTPScenarios(ctx context.Context, client awsclient.Client, opts Options) ([]httpScenario, error) {
 	var resources []awsclient.StackResource
 	var apis []awsclient.APIDetail
-	if opts.StackName != "" {
+	if opts.StackName != "" && opts.StackType != stack.TypePulumi {
 		var err error
 		resources, err = client.CloudFormationStackResources(ctx, opts.StackName)
 		if err != nil {
